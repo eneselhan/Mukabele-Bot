@@ -1,0 +1,16 @@
+python-dotenv
+Pillow
+kraken
+openai
+google-cloud-vision
+google-cloud-texttospeech
+google-auth
+pypdfium2
+python-docx
+fastapi
+uvicorn
+pydantic
+gTTS
+requests
+rapidfuzz
+python-multipart

@@ -1,0 +1,20 @@
+{
+  "id": "74c5753c-55cf-4e2f-a415-fdfbcaeeeb18",
+  "name": "tasavvuf yazma",
+  "created_at": null,
+  "nushalar": [],
+  "nusha_configs": {
+    "1": {
+      "dpi": 200
+    },
+    "2": {
+      "dpi": 200
+    },
+    "3": {
+      "dpi": 200
+    },
+    "4": {
+      "dpi": 200
+    }
+  }
+}

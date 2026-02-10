@@ -1,17 +1,28 @@
 @echo off
-if not exist "venv_311" (
-    echo Python 3.11 Sanal Ortami bulunamadi. Olusturuluyor...
-    py -3.11 -m venv venv_311
+echo Sistemdeki Python versiyonu kullaniliyor...
+python --version
+
+:: Eger 'venv' klasoru yoksa olustur
+if not exist "venv" (
+    echo Sanal Ortam (venv) bulunamadi. Mevcut Python ile olusturuluyor...
+    python -m venv venv
 )
 
-echo Bagimliliklar kontrol ediliyor (Timeout artirildi)...
-venv_311\Scripts\pip install --default-timeout=1000 -r requirements.txt
+echo Bagimliliklar yukleniyor/guncelleniyor...
+:: Once pip'i guncelle
+venv\Scripts\python -m pip install --upgrade pip
+:: Sonra requirements.txt'yi yukle
+venv\Scripts\pip install --default-timeout=1000 -r requirements.txt
+
 if %ERRORLEVEL% NEQ 0 (
-    echo Bagimlilik kurulumunda hata olustu.
+    echo !HATA! Bagimliliklar yuklenirken sorun olustu.
+    echo Lutfen requirements.txt dosyasini kontrol edin (Kraken silindi mi?).
     pause
     exit /b %ERRORLEVEL%
 )
 
-echo Bot baslatiliyor...
-venv_311\Scripts\python main.py
+echo ---------------------------------------
+echo Bot Baslatiliyor...
+echo ---------------------------------------
+venv\Scripts\python main.py
 pause

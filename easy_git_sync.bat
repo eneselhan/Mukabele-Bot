@@ -2,86 +2,91 @@
 setlocal EnableDelayedExpansion
 
 echo ========================================================
-echo   Antigravity Github Sync Tool
+echo   Antigravity Github Sync Tool (v2.0)
 echo ========================================================
 
-:: 1. Giris Kontrolu
+:: 1. Git Yuklu mu?
 git --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [HATA] Git yuklu degil veya PATH'e ekli degil. Lutfen Git'i yukleyin.
+    echo [HATA] Git bulunamadi. Lutfen Git'i yukleyin ve bilgisayari yeniden baslatin.
+    echo İndirme Linki: https://git-scm.com/downloads
     pause
     exit /b
 )
 
-:: 2. Repo Kontrolu ve Baslatma
+:: 2. Repo Baslatma / Kontrol
 if not exist ".git" (
-    echo [BILGI] Bu klasorde Git reposu bulunamadi. Yeni repo olusturuluyor...
+    echo [BILGI] Git reposu baslatiliyor...
     git init
     git branch -M main
 ) else (
-    echo [BILGI] Git reposu mevcut.
+    echo [BILGI] Mevcut Git reposu algilandi.
 )
 
-:: 3. Remote Kontrolu
+:: 3. Remote URL Kontrolu
 git remote get-url origin >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [UYARI] Uzak sunucu (Remote URL) tanimli degil.
-    echo Lutfen GitHub'da yeni bir bos repo olusturun ve linki asagiya yapistirin.
-    echo Ornek: https://github.com/kullaniciadi/proje-adi.git
+    echo.
+    echo [UYARI] Henuz bir GitHub deposuna baglanmamis.
+    echo Lutfen GitHub'da bos bir repo acin ve linkini yapistirin.
+    echo (Ornek: https://github.com/kullaniciadi/proje.git)
+    echo.
     set /p REMOTE_URL="Repo URL'si: "
-    
+
     if "!REMOTE_URL!"=="" (
-        echo [HATA] URL girilmedi. İptal ediliyor.
+        echo [HATA] URL bos birakildi. İptal ediliyor.
         pause
         exit /b
     )
     
     git remote add origin !REMOTE_URL!
-    echo [BASARILI] Remote eklendi.
+    echo [BASARILI] Uzak sunucu eklendi.
 ) else (
-    echo [BILGI] Remote URL zaten tanimli.
+    echo [BILGI] Remote URL zaten bagli.
 )
 
-:: 4. .gitignore Kontrolu
+:: 4. .gitignore Kontrolu (Yoksa Olustur)
 if not exist ".gitignore" (
-    echo [BILGI] .gitignore dosyasi olusturuluyor (Standart Node/Python/General)...
+    echo [BILGI] .gitignore dosyasi olusturuluyor...
     (
+        echo # Python
+        echo venv/
+        echo venv_311/
+        echo __pycache__/
+        echo *.pyc
+        echo .env
+        echo .DS_Store
+        echo # Node
         echo node_modules/
         echo .next/
-        echo dist/
+        echo out/
         echo build/
-        echo .env
-        echo .env.local
-        echo .DS_Store
-        echo venv/
-        echo __pycache__/
-        echo *.log
         echo .vscode/
-        echo .idea/
+        echo *.log
+        echo tahkik_data/
     ) > .gitignore
 )
 
-:: 5. Ekleme ve Commit
+:: 5. Commit ve Push
 echo.
-echo [ISLEM] Dosyalar ekleniyor ve commitleniyor...
+echo [ISLEM] Degisiklikler algilaniyor...
 git add .
-set TIMESTAMP=%date% %time%
-git commit -m "Otomatik yedekleme: %TIMESTAMP%"
+git commit -m "Otomatik Yedekleme: %date% %time%"
 
-:: 6. Push Islemi
 echo.
-echo [ISLEM] GitHub'a yukleniyor...
+echo [ISLEM] GitHub'a gonderiliyor (Push)...
 git push -u origin main
 
 if %errorlevel% neq 0 (
     echo.
-    echo [HATA] Yukleme sirasinda bir sorun olustu. 
-    echo - Remote URL'nin dogru oldugundan emin olun.
-    echo - Force push gerekebilir (dikkatli olun).
-    echo - İnternet baglantinizi kontrol edin.
+    echo [HATA] Gonderme basarisiz oldu!
+    echo Olası Sebepler:
+    echo 1. İnternet baglantisi yok.
+    echo 2. Repo bos degil (Once 'git pull' gerekebilir).
+    echo 3. Yetki hatasi (GitHub'a giris yapmamis olabilirsiniz).
 ) else (
     echo.
-    echo [BASARILI] Kodlariniz GitHub'a yuklendi!
+    echo [BASARILI] Kodlar guvenle GitHub'a yuklendi.
 )
 
 echo.

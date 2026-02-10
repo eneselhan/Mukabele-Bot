@@ -45,9 +45,9 @@ SPELLCHECK_MAX_PARAS = 999999
 # =========================
 # OUTPUT DIRECTORIES
 # =========================
-BASE = Path(__file__).resolve().parent.parent
-PROJECTS_DIR = BASE / "tahkik_data" / "projects"
-OUT = BASE / "output_lines"
+BASE_DIR = Path(__file__).resolve().parent.parent
+PROJECTS_DIR = BASE_DIR / "tahkik_data" / "projects"
+OUT = BASE_DIR / "output_lines"
 
 # --- MAIN NUSHA (Nüsha 1) ---
 PAGES_DIR = OUT / "pages"

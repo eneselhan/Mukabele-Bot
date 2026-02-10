@@ -2,18 +2,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Form
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 import uvicorn
 import os
-import shutil
+
 import json
 from pathlib import Path
 
+# Fix for Silent Crash (PyTorch/Kraken Thread Conflict)
+os.environ["OMP_NUM_THREADS"] = "1"
+
 # New Architecture Services
 from src.services.project_manager import ProjectManager
+from src.config import BASE_DIR
 from src.services.manuscript_engine import ManuscriptEngine
 from src.config import PROJECTS_DIR
 
@@ -43,6 +48,9 @@ app.add_middleware(
 # Mount projects folder to /media to serve images/audio
 app.mount("/media", StaticFiles(directory=PROJECTS_DIR), name="media")
 
+# Mount tahkik_data folder to /tahkik_data to serve other static assets
+app.mount("/tahkik_data", StaticFiles(directory=BASE_DIR / "tahkik_data"), name="tahkik_data")
+
 
 # --- DATA MODELS ---
 class CreateProjectRequest(BaseModel):
@@ -51,6 +59,7 @@ class CreateProjectRequest(BaseModel):
 class ProcessRequest(BaseModel):
     step: str # 'images', 'ocr', 'align', 'full'
     nusha_index: int = 1
+    dpi: int = 300
 
 
 # --- SERVICES ---
@@ -58,7 +67,7 @@ project_manager = ProjectManager()
 
 
 # --- BACKGROUND WORKER ---
-def background_task_runner(project_id: str, step: str, nusha_index: int):
+def background_task_runner(project_id: str, step: str, nusha_index: int, dpi: int = 300):
     global GLOBAL_STATUS
     GLOBAL_STATUS.update({
         "busy": True,
@@ -76,14 +85,14 @@ def background_task_runner(project_id: str, step: str, nusha_index: int):
         if step in ["ocr", "full"]:
              # This runs convert_pdf_to_images, run_line_segmentation, and run_ocr in sequence
              GLOBAL_STATUS["message"] = "Tam süreç başlatılıyor (PDF -> Segmentasyon -> OCR)..."
-             res = engine.run_full_pipeline(nusha_index)
+             res = engine.run_full_pipeline(nusha_index, dpi=dpi)
              if not res["success"]: raise RuntimeError(res.get("error"))
 
         # (Existing logic for individual steps is now redundant for 'ocr' but kept if needed for granularity or specific 'images' requests)
         elif step == "images":
              GLOBAL_STATUS["message"] = "PDF -> Resim dönüştürülüyor..."
              GLOBAL_STATUS["progress"] = 10
-             res = engine.convert_pdf_to_images(nusha_index)
+             res = engine.convert_pdf_to_images(nusha_index, dpi=dpi)
              if not res["success"]: raise RuntimeError(res.get("error"))
 
         # 4. Alignment
@@ -137,35 +146,57 @@ def get_project(project_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/api/projects/{project_id}")
+def delete_project(project_id: str):
+    try:
+        project_manager.delete_project(project_id)
+        return {"status": "success", "message": f"Project {project_id} deleted."}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class UpdateNameRequest(BaseModel):
+    name: str
+
+@app.put("/api/projects/{project_id}/nusha/{nusha_index}/name")
+def update_nusha_name(project_id: str, nusha_index: int, req: UpdateNameRequest):
+    project_manager.update_nusha_name(project_id, nusha_index, req.name)
+    return {"status": "success", "name": req.name}
+
+@app.post("/api/projects/{project_id}/word/spellcheck")
+def run_spellcheck(project_id: str):
+    try:
+        result = project_manager.run_word_spellcheck(project_id)
+        return result
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.delete("/api/projects/{project_id}/files")
+def delete_project_file(project_id: str, file_type: str, nusha_index: int = 1):
+    try:
+        project_manager.delete_file(project_id, file_type, nusha_index)
+        return {"status": "success"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 @app.post("/api/projects/{project_id}/upload")
 async def upload_file(
-    project_id: str,
-    file: UploadFile = File(...),
-    nusha_index: int = Form(1),
-    file_type: str = Form("pdf"), # 'pdf' or 'docx'
-    dpi: int = Form(300) 
+    project_id: str, 
+    file: UploadFile = File(...), 
+    file_type: str = Form(...),  # 'docx' veya 'pdf'
+    nusha_index: int = Form(1)
 ):
+    # Dosya uzantısını kontrol et
+    if file_type == "docx" and not file.filename.endswith(".docx"):
+        raise HTTPException(status_code=400, detail="Sadece .docx yükleyebilirsiniz")
+    
     try:
-        if file_type == "pdf":
-            # Save to nusha folder
-            target_dir = project_manager.get_nusha_dir(project_id, nusha_index)
-            file_path = target_dir / "source.pdf"
-            
-            # Save DPI config
-            project_manager.update_nusha_config(project_id, nusha_index, {"dpi": dpi})
-            
-        elif file_type == "docx":
-             target_dir = project_manager.get_project_path(project_id)
-             file_path = target_dir / "tahkik.docx"
-        else:
-            raise HTTPException(status_code=400, detail="Invalid file type. Use 'pdf' or 'docx'.")
-
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
-        return {"filename": file.filename, "saved_as": str(file_path.name), "status": "uploaded", "dpi": dpi if file_type == "pdf" else None}
-        
+        # Note: We pass file.file (the file-like object) to the manager
+        file_path = project_manager.save_uploaded_file(project_id, file.file, file_type, nusha_index, filename=file.filename)
+        return {"status": "success", "path": str(file_path)}
     except Exception as e:
+        print(f"Upload Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/projects/{project_id}/process")
@@ -177,22 +208,55 @@ async def process_project(
     if GLOBAL_STATUS["busy"]:
          raise HTTPException(status_code=400, detail="Sistem şu an meşgul.")
 
-    background_tasks.add_task(background_task_runner, project_id, req.step, req.nusha_index)
+    background_tasks.add_task(background_task_runner, project_id, req.step, req.nusha_index, req.dpi)
     return {"ok": True, "message": f"{req.step} işlemi kuyruğa alındı."}
 
 @app.get("/api/projects/{project_id}/status")
 def get_status(project_id: str):
-    # If the global status is busy with THIS project, return it
-    if GLOBAL_STATUS["project_id"] == project_id:
-        return GLOBAL_STATUS
-    
-    # Otherwise return idle
-    return {
+    # 1. Get Persistent File Status from Disk
+    try:
+        file_status = project_manager.get_project_status(project_id)
+    except Exception:
+        file_status = {"has_tahkik": False, "nushas": {}}
+
+    # 2. Get Ephemeral Process Status (Global Variable)
+    process_status = {
         "busy": False,
         "step": "idle",
-        "message": "Bekleniyor",
-        "progress": 0
+        "message": "Hazır",
+        "progress": 0,
+        "active_nusha": None
+    }
+    
+    # If the global status is busy with THIS project, override process status
+    if GLOBAL_STATUS["project_id"] == project_id:
+        process_status = {
+            "busy": GLOBAL_STATUS["busy"],
+            "step": GLOBAL_STATUS["step"],
+            "message": GLOBAL_STATUS["message"],
+            "progress": GLOBAL_STATUS["progress"],
+            "active_nusha": GLOBAL_STATUS["nusha_index"]
+        }
+
+    # 3. Merge and Return
+    return {
+        **process_status,
+        **file_status
     }
 
+@app.get("/api/projects/{project_id}/mukabele-data")
+def get_mukabele_data(project_id: str):
+    try:
+        json_path = project_manager.projects_dir / project_id / "mukabele.json"
+        if json_path.exists():
+            import json
+            with open(json_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        else:
+            # Dosya yoksa boş şablon dön
+            return {"segments": []}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("src.api_server:app", host="0.0.0.0", port=8000, reload=True)

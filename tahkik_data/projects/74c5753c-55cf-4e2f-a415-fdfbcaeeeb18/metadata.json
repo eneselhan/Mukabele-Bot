@@ -5,16 +5,17 @@
   "nushalar": [],
   "nusha_configs": {
     "1": {
-      "dpi": 200
+      "dpi": 300
     },
     "2": {
-      "dpi": 200
+      "dpi": 300
     },
     "3": {
-      "dpi": 200
+      "dpi": 300
     },
     "4": {
-      "dpi": 200
+      "dpi": 300,
+      "filename": "39 Fütüvvet - 4.pdf"
     }
   }
 }

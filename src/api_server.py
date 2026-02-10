@@ -21,6 +21,8 @@ from src.services.project_manager import ProjectManager
 from src.config import BASE_DIR
 from src.services.manuscript_engine import ManuscriptEngine
 from src.config import PROJECTS_DIR
+from src.services.alignment_service import AlignmentService
+from src.services.tts_service import TTSService
 
 # --- GLOBAL STATE ---
 # Track current job status
@@ -61,9 +63,29 @@ class ProcessRequest(BaseModel):
     nusha_index: int = 1
     dpi: int = 300
 
+class UpdateLineRequest(BaseModel):
+    line_no: int
+    new_text: str
+
+class TTSRequest(BaseModel):
+    ssml: Optional[str] = None
+    tokens: Optional[List[str]] = None
+    language_code: Optional[str] = "ar-XA"
+    gender: Optional[str] = "MALE"
+    voice_name: Optional[str] = None
+    speaking_rate: Optional[float] = 1.0
+    action: Optional[str] = None
+    page_key: Optional[str] = None
+    archive_path: Optional[str] = None
+    nusha_id: Optional[int] = 1
+    token_start: Optional[int] = 0
+    reset_log: Optional[bool] = False
+
 
 # --- SERVICES ---
 project_manager = ProjectManager()
+alignment_service = AlignmentService()
+tts_service = TTSService()
 
 
 # --- BACKGROUND WORKER ---
@@ -247,14 +269,67 @@ def get_status(project_id: str):
 @app.get("/api/projects/{project_id}/mukabele-data")
 def get_mukabele_data(project_id: str):
     try:
-        json_path = project_manager.projects_dir / project_id / "mukabele.json"
-        if json_path.exists():
-            import json
-            with open(json_path, "r", encoding="utf-8") as f:
+        # Priority 1: alignment.json (Rich Data with Highlighting)
+        alignment_path = project_manager.projects_dir / project_id / "alignment.json"
+        
+        # Priority 2: mukabele.json (Legacy/Simple Data)
+        mukabele_path = project_manager.projects_dir / project_id / "mukabele.json"
+        
+        target_path = None
+        if alignment_path.exists():
+            target_path = alignment_path
+            # Load and Process Highlighting
+            with open(target_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # Inject Highlighting (Line Marks)
+            data = alignment_service.process_highlighting(data)
+            return data
+            
+        elif mukabele_path.exists():
+            target_path = mukabele_path
+            with open(target_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         else:
             # Dosya yoksa boş şablon dön
             return {"segments": []}
+            
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.post("/api/projects/{project_id}/lines/update")
+def update_line(project_id: str, req: UpdateLineRequest):
+    try:
+        # Determine which file to update
+        alignment_path = project_manager.projects_dir / project_id / "alignment.json"
+        # Only support updating alignment.json for now as it matches the editor structure
+        target_path = alignment_path if alignment_path.exists() else None
+        
+        if not target_path:
+             raise HTTPException(status_code=404, detail="Alignment data not found (alignment.json missing)")
+
+        success = alignment_service.update_line(req.line_no, req.new_text, file_path=target_path)
+        
+        if success:
+            return {"ok": True}
+        else:
+            raise HTTPException(status_code=404, detail="Line not found or save failed")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/tts")
+def tts_generate(req: TTSRequest):
+    try:
+        # Convert Pydantic model to dict for service
+        # Exclude defaults? No, services handles them.
+        req_dict = req.model_dump()
+        result = tts_service.process_tts_request(req_dict)
+        
+        if "error" in result:
+             status = result.get("status", 500)
+             return JSONResponse(status_code=status, content=result)
+             
+        return result
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 

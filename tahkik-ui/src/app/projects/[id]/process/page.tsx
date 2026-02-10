@@ -121,7 +121,7 @@ export default function CompactListDashboard() {
             <div className="max-w-5xl mx-auto">
                 <div className="flex justify-between items-center mb-6">
                     <h1 className="text-xl font-bold text-slate-700">Proje Kontrol Paneli</h1>
-                    <a href={`/projects/${projectId}/mukabele`} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold text-sm shadow-sm transition-colors flex items-center gap-2">
+                    <a href={`/projects/${projectId}/editor`} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold text-sm shadow-sm transition-colors flex items-center gap-2">
                         Mukabele Görünümü <Play size={16} fill="currentColor" />
                     </a>
                 </div>
@@ -331,7 +331,7 @@ export default function CompactListDashboard() {
                 {/* MUKABELE BUTONU */}
                 <div className="mt-8 flex justify-end border-t pt-6 pb-10">
                     <button
-                        onClick={() => window.location.href = `/projects/${projectId}/mukabele`}
+                        onClick={() => window.location.href = `/projects/${projectId}/editor`}
                         className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-xl font-bold text-lg shadow-lg flex items-center gap-3 transition-transform hover:scale-105"
                     >
                         <BookOpen size={24} />

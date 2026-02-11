@@ -24,9 +24,8 @@ export default function SplitPane({
     useEffect(() => {
         const handleMouseMove = (e: MouseEvent) => {
             if (!isDragging || !containerRef.current) return;
-
             const req = containerRef.current.getBoundingClientRect();
-            const x = e.clientX - req.left; // relative x
+            const x = e.clientX - req.left;
             const ratio = x / req.width;
             setSplitRatio(ratio);
         };
@@ -50,23 +49,22 @@ export default function SplitPane({
         };
     }, [isDragging, setSplitRatio]);
 
-    // Convert ratio to % for CSS
-    // Subtract half of splitter width (e.g. 5px of 10px) to keep centering correct-ish
-    const leftWidth = `calc(${splitRatio * 100}% - 5px)`;
-    const rightWidth = `calc(${(1 - splitRatio) * 100}% - 5px)`;
+    const leftWidth = `calc(${splitRatio * 100}% - 3px)`;
+    const rightWidth = `calc(${(1 - splitRatio) * 100}% - 3px)`;
 
     return (
-        <div ref={containerRef} className="flex flex-row h-full w-full overflow-hidden relative">
+        <div ref={containerRef} className="flex flex-row h-full w-full overflow-hidden relative bg-slate-900">
             <div style={{ width: leftWidth }} className="h-full overflow-hidden">
                 {left}
             </div>
 
             {/* Splitter Handle */}
             <div
-                className="w-[10px] h-full cursor-col-resize bg-slate-100 hover:bg-slate-200 border-l border-r border-slate-200 transition-colors z-10 flex items-center justify-center"
+                className={`w-[6px] h-full cursor-col-resize flex items-center justify-center transition-colors z-10 ${isDragging ? "bg-amber-500/30" : "bg-slate-800 hover:bg-slate-700"
+                    }`}
                 onMouseDown={handleMouseDown}
             >
-                <div className="w-[2px] h-8 bg-slate-300 rounded-full" />
+                <div className={`w-[2px] h-8 rounded-full transition-colors ${isDragging ? "bg-amber-500" : "bg-slate-600"}`} />
             </div>
 
             <div style={{ width: rightWidth }} className="h-full overflow-hidden">

@@ -1,20 +1,9 @@
 "use client";
 
-import React from "react";
-import { MukabeleProvider } from "@/components/mukabele/MukabeleContext";
-import { TTSProvider } from "@/components/mukabele/TTSContext"; // Correct path assumed
-import MukabeleView from "@/components/mukabele/MukabeleView";
-import Navbar from "@/components/Navbar";
+import { useParams, redirect } from "next/navigation";
 
 export default function EditorPage() {
-    return (
-        <>
-            <Navbar />
-            <MukabeleProvider>
-                <TTSProvider>
-                    <MukabeleView />
-                </TTSProvider>
-            </MukabeleProvider>
-        </>
-    );
+    const params = useParams();
+    const id = params.id as string;
+    redirect(`/projects/${id}/mukabele`);
 }

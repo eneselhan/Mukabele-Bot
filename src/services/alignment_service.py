@@ -402,3 +402,37 @@ class AlignmentService:
         except Exception as e:
             print(f"Error updating line: {e}")
             return False
+
+    def delete_line(self, line_no: int, file_path: Path) -> bool:
+        """
+        Deletes a line entry from the alignment file by line_no.
+        Removes the entire line from the aligned array and saves back.
+        """
+        try:
+            if not file_path.exists():
+                return False
+
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            deleted = False
+            keys = ["aligned", "aligned_alt", "aligned_alt3", "aligned_alt4"]
+
+            for key in keys:
+                if key in data and isinstance(data[key], list):
+                    original_len = len(data[key])
+                    data[key] = [item for item in data[key] if not (isinstance(item, dict) and item.get("line_no") == line_no)]
+                    if len(data[key]) < original_len:
+                        deleted = True
+                        break
+
+            if deleted:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=4)
+                return True
+
+            return False
+
+        except Exception as e:
+            print(f"Error deleting line {line_no}: {e}")
+            return False

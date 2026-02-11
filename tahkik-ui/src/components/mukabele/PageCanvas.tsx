@@ -7,15 +7,14 @@ import { useParams } from "next/navigation";
 export default function PageCanvas() {
     const {
         pages,
-        activePageKey,
+        activePageKey, setActivePageKey,
         zoom,
         activeLine,
         setActiveLine,
         nushaIndex
     } = useMukabele();
 
-    // We need usage of useParams to get project ID for image URLs
-    const params = useParams(); // params.id is project_id
+    const params = useParams();
     const projectId = params.id as string;
 
     const [imgLoaded, setImgLoaded] = useState(false);
@@ -31,27 +30,13 @@ export default function PageCanvas() {
         setImgLoaded(false);
     }, [activePageKey, nushaIndex]);
 
-    // Construct Image URL
     const imageUrl = useMemo(() => {
-        if (!currentPage?.page_image) {
-            console.log("PageCanvas: No currentPage or page_image", { currentPage, activePageKey });
-            return null;
-        }
-
+        if (!currentPage?.page_image) return null;
         const rawPath = currentPage.page_image.replace(/\\/g, "/");
         const filename = rawPath.split("/").pop();
-
         if (!filename) return null;
-
-        // Determine subfolder based on Nusha Index
-        // nushaIndex: 1 -> nusha_1, 2 -> nusha_2, etc.
         const nushaFolder = `nusha_${nushaIndex}`;
-
-        // Construct URL: /media/{projectId}/{nushaFolder}/pages/{filename}
-        const url = `http://localhost:8000/media/${projectId}/${nushaFolder}/pages/${filename}`;
-
-        console.log("PageCanvas: Constructed URL", url);
-        return url;
+        return `http://localhost:8000/media/${projectId}/${nushaFolder}/pages/${filename}`;
     }, [currentPage, projectId, nushaIndex, activePageKey]);
 
     const handleImgLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -63,162 +48,200 @@ export default function PageCanvas() {
     // Auto-scroll to active bbox
     useEffect(() => {
         if (activeLine !== null && activeBoxRef.current && containerRef.current) {
-            // Wait for render?
             setTimeout(() => {
-                if (activeBoxRef.current && containerRef.current) {
-                    const box = activeBoxRef.current.getBoundingClientRect();
-                    const cont = containerRef.current.getBoundingClientRect();
-
-                    // Helper to scroll
-                    const scrollTop = activeBoxRef.current.getBBox().y * (containerRef.current.clientWidth / naturalSize.w) * zoom; // Rough estimate or use scrollIntoView
-
-                    activeBoxRef.current.scrollIntoView({
-                        behavior: "smooth",
-                        block: "center",
-                        inline: "center"
-                    });
-                }
+                activeBoxRef.current?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "center",
+                    inline: "center"
+                });
             }, 100);
         }
     }, [activeLine, zoom, naturalSize]);
 
+    // Extract page label from page_name (e.g. "page_0001_01R.png" → "01R")
+    const pageLabel = useMemo(() => {
+        if (!currentPage?.page_name) return "";
+        const match = currentPage.page_name.match(/_(\d+[LR])\.png$/i);
+        return match ? match[1] : currentPage.page_name.replace(/\.png$/i, "");
+    }, [currentPage]);
+
     if (!currentPage) {
         return (
-            <div className="flex items-center justify-center h-full text-slate-400">
-                Sayfa seçili değil
+            <div className="flex items-center justify-center h-full text-slate-500 bg-slate-900">
+                <span className="text-sm">Sayfa seçili değil</span>
             </div>
         );
     }
 
     return (
-        <div
-            ref={containerRef}
-            className="w-full h-full overflow-auto bg-slate-100 relative text-center p-4"
-        >
+        <div className="flex flex-col h-full bg-slate-900">
+            {/* Main canvas area */}
             <div
-                className="relative inline-block transition-all duration-200 origin-top rounded shadow-sm border border-slate-200 overflow-hidden"
-                style={{
-                    width: `${zoom * 100}%`,
-                }}
+                ref={containerRef}
+                className="flex-1 overflow-auto relative text-center p-3"
             >
-                {/* Image */}
-                {imageUrl && (
-                    <img
-                        src={imageUrl}
-                        alt={currentPage.page_name}
-                        className="w-full block"
-                        onLoad={handleImgLoad}
-                    />
-                )}
+                <div
+                    className="relative inline-block transition-all duration-200 origin-top rounded-lg overflow-hidden shadow-2xl shadow-black/40"
+                    style={{ width: `${zoom * 100}%` }}
+                >
+                    {imageUrl && (
+                        <img
+                            src={imageUrl}
+                            alt={currentPage.page_name}
+                            className="w-full block"
+                            onLoad={handleImgLoad}
+                        />
+                    )}
 
-                {/* SVG Overlay */}
-                {imgLoaded && (
-                    <svg
-                        className="absolute top-0 left-0 w-full h-full pointer-events-auto"
-                        viewBox={`0 0 ${naturalSize.w} ${naturalSize.h}`}
-                    >
-                        {/* Mask Definition for Darkening */}
-                        <defs>
-                            <mask id="highlightMask">
-                                <rect x="0" y="0" width="100%" height="100%" fill="white" />
-                                {/* Cut hole for active line */}
-                                {activeLine !== null && currentPage.lines.map(line => {
-                                    if (line.line_no === activeLine && line.bbox) {
-                                        const [x0, y0, x1, y1] = line.bbox;
-                                        return (
-                                            <rect
-                                                key={`hole-${line.line_no}`}
-                                                x={x0} y={y0}
-                                                width={x1 - x0} height={y1 - y0}
-                                                fill="black"
-                                                rx="10" ry="10"
-                                            />
-                                        );
-                                    }
-                                    return null;
-                                })}
-                            </mask>
-                        </defs>
+                    {/* SVG Overlay */}
+                    {imgLoaded && (
+                        <svg
+                            className="absolute top-0 left-0 w-full h-full pointer-events-auto"
+                            viewBox={`0 0 ${naturalSize.w} ${naturalSize.h}`}
+                        >
+                            <defs>
+                                <mask id="highlightMask">
+                                    <rect x="0" y="0" width="100%" height="100%" fill="white" />
+                                    {activeLine !== null && currentPage.lines.map(line => {
+                                        if (line.line_no === activeLine && line.bbox) {
+                                            const [x0, y0, x1, y1] = line.bbox;
+                                            return (
+                                                <rect
+                                                    key={`hole-${line.line_no}`}
+                                                    x={x0} y={y0}
+                                                    width={x1 - x0} height={y1 - y0}
+                                                    fill="black"
+                                                    rx="10" ry="10"
+                                                />
+                                            );
+                                        }
+                                        return null;
+                                    })}
+                                </mask>
+                            </defs>
 
-                        {/* Clickable transparent rects & OCR Text for ALL lines */}
-                        {currentPage.lines.map(line => {
-                            if (!line.bbox) return null;
-                            const [x0, y0, x1, y1] = line.bbox;
-                            const width = x1 - x0;
-                            const height = y1 - y0;
-                            // Calculate font size to fit height roughly
-                            const fontSize = height * 0.75;
-
-                            return (
-                                <g key={line.line_no}>
-                                    {/* Invisible Rect for click hit area */}
-                                    <rect
-                                        x={x0} y={y0}
-                                        width={width} height={height}
-                                        fill="transparent"
-                                        className="cursor-pointer hover:fill-blue-500/10"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setActiveLine(line.line_no);
-                                        }}
-                                    >
-                                        <title>Satır {line.line_no}</title>
-                                    </rect>
-
-                                    {/* OCR Text Overlay (Invisible but selectable/searchable) */}
-                                    <text
-                                        x={x1} y={y1 - (height * 0.15)} // Align bottom-right for RTL
-                                        textAnchor="end"
-                                        fontSize={fontSize}
-                                        fill="transparent"
-                                        stroke="none"
-                                        className="pointer-events-none select-none" // For now, keep it simple. If we want selectable text, we need more complex logic.
-                                        // "select-none" because native selection on SVG text is tricky with zoom/pan.
-                                        // The user interacts via the list or clicking the box.
-                                        style={{
-                                            fontFamily: '"Traditional Arabic", serif',
-                                            direction: "rtl",
-                                            userSelect: "none"
-                                        }}
-                                    >
-                                        {line.best?.raw}
-                                    </text>
-                                </g>
-                            );
-                        })}
-
-                        {/* Dimming Overlay with Hole */}
-                        {activeLine !== null && (
-                            <rect
-                                x="0" y="0" width="100%" height="100%"
-                                fill="rgba(0,0,0,0.3)"
-                                mask="url(#highlightMask)"
-                                className="pointer-events-none"
-                            />
-                        )}
-
-                        {/* Active Line Stroke */}
-                        {activeLine !== null && currentPage.lines.map(line => {
-                            if (line.line_no === activeLine && line.bbox) {
+                            {/* Clickable line rects */}
+                            {currentPage.lines.map(line => {
+                                if (!line.bbox) return null;
                                 const [x0, y0, x1, y1] = line.bbox;
                                 return (
-                                    <rect
-                                        ref={activeBoxRef}
-                                        key={`outline-${line.line_no}`}
-                                        x={x0} y={y0}
-                                        width={x1 - x0} height={y1 - y0}
-                                        fill="none"
-                                        stroke="#3b82f6" // blue-500
-                                        strokeWidth="6"
-                                        rx="10" ry="10"
-                                        className="pointer-events-none transition-all duration-300"
-                                    />
+                                    <g key={line.line_no}>
+                                        <rect
+                                            x={x0} y={y0}
+                                            width={x1 - x0} height={y1 - y0}
+                                            fill="transparent"
+                                            className="cursor-pointer hover:fill-amber-500/10"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setActiveLine(line.line_no);
+                                            }}
+                                        >
+                                            <title>Satır {line.line_no}</title>
+                                        </rect>
+                                        <text
+                                            x={x1} y={y1 - ((y1 - y0) * 0.15)}
+                                            textAnchor="end"
+                                            fontSize={(y1 - y0) * 0.75}
+                                            fill="transparent"
+                                            stroke="none"
+                                            className="pointer-events-none select-none"
+                                            style={{
+                                                fontFamily: '"Traditional Arabic", serif',
+                                                direction: "rtl",
+                                                userSelect: "none"
+                                            }}
+                                        >
+                                            {line.best?.raw}
+                                        </text>
+                                    </g>
                                 );
-                            }
-                            return null;
-                        })}
-                    </svg>
-                )}
+                            })}
+
+                            {/* Dimming overlay */}
+                            {activeLine !== null && (
+                                <rect
+                                    x="0" y="0" width="100%" height="100%"
+                                    fill="rgba(0,0,0,0.4)"
+                                    mask="url(#highlightMask)"
+                                    className="pointer-events-none"
+                                />
+                            )}
+
+                            {/* Active line stroke */}
+                            {activeLine !== null && currentPage.lines.map(line => {
+                                if (line.line_no === activeLine && line.bbox) {
+                                    const [x0, y0, x1, y1] = line.bbox;
+                                    return (
+                                        <rect
+                                            ref={activeBoxRef}
+                                            key={`outline-${line.line_no}`}
+                                            x={x0} y={y0}
+                                            width={x1 - x0} height={y1 - y0}
+                                            fill="none"
+                                            stroke="#f59e0b"
+                                            strokeWidth="6"
+                                            rx="10" ry="10"
+                                            className="pointer-events-none transition-all duration-300"
+                                        />
+                                    );
+                                }
+                                return null;
+                            })}
+                        </svg>
+                    )}
+
+                    {/* Page label overlay */}
+                    {pageLabel && (
+                        <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-sm text-white text-xs font-bold px-2.5 py-1 rounded-lg border border-white/10">
+                            {pageLabel}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Thumbnail strip */}
+            <div className="shrink-0 bg-slate-850 border-t border-slate-700 px-2 py-1.5 overflow-x-auto flex gap-1.5 items-center"
+                style={{ backgroundColor: "rgb(22, 28, 38)" }}
+            >
+                {pages.map((page, idx) => {
+                    const isActive = page.key === activePageKey;
+                    const rawPath = page.page_image?.replace(/\\/g, "/");
+                    const fname = rawPath?.split("/").pop();
+                    const thumbUrl = fname
+                        ? `http://localhost:8000/media/${projectId}/nusha_${nushaIndex}/pages/${fname}`
+                        : null;
+
+                    // Extract short label
+                    const label = page.page_name?.match(/_(\d+[LR])\.png$/i)?.[1] || `${idx + 1}`;
+
+                    return (
+                        <button
+                            key={page.key}
+                            onClick={() => setActivePageKey(page.key)}
+                            className={`shrink-0 flex flex-col items-center gap-0.5 rounded-md p-0.5 transition-all ${isActive
+                                ? "ring-2 ring-amber-500 bg-slate-700"
+                                : "hover:bg-slate-700/50 opacity-60 hover:opacity-100"
+                                }`}
+                            title={page.page_name}
+                        >
+                            {thumbUrl ? (
+                                <img
+                                    src={thumbUrl}
+                                    alt={label}
+                                    className="h-10 w-auto rounded object-contain bg-slate-950"
+                                    loading="lazy"
+                                />
+                            ) : (
+                                <div className="h-10 w-8 bg-slate-700 rounded flex items-center justify-center text-[9px] text-slate-400">
+                                    {idx + 1}
+                                </div>
+                            )}
+                            <span className={`text-[8px] font-medium tabular-nums ${isActive ? "text-amber-400" : "text-slate-500"}`}>
+                                {label}
+                            </span>
+                        </button>
+                    );
+                })}
             </div>
         </div>
     );

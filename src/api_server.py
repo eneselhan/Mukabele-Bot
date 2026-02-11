@@ -977,6 +977,41 @@ def update_line(project_id: str, req: UpdateLineRequest):
         print(f"[API] Update Exception: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+class DeleteLineRequest(BaseModel):
+    line_no: int
+    nusha_index: int = 1
+
+@app.post("/api/projects/{project_id}/lines/delete")
+def delete_line(project_id: str, req: DeleteLineRequest):
+    try:
+        # Determine which alignment file to modify
+        target_path = None
+        nusha_path = project_manager.get_nusha_dir(project_id, req.nusha_index) / "alignment.json"
+
+        if nusha_path.exists():
+            target_path = nusha_path
+        elif req.nusha_index == 1:
+            root_path = project_manager.projects_dir / project_id / "alignment.json"
+            if root_path.exists():
+                target_path = root_path
+
+        if not target_path:
+            raise HTTPException(status_code=404, detail=f"Alignment data not found for Nusha {req.nusha_index}")
+
+        success = alignment_service.delete_line(req.line_no, file_path=target_path)
+
+        if success:
+            return {"ok": True}
+        else:
+            raise HTTPException(status_code=404, detail="Line not found or delete failed")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[API] Delete Line Exception: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/tts")
 def tts_generate(req: TTSRequest):
     try:

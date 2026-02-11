@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 
 // Types
@@ -74,6 +74,7 @@ interface MukabeleContextType {
     lines: LineData[]; // Returns active lines
     pages: PageData[]; // Derived pages index
     updateLineText: (lineNo: number, newText: string) => void;
+    deleteLine: (lineNo: number) => Promise<boolean>;
 }
 
 interface PageData {
@@ -229,6 +230,47 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
         })));
     };
 
+    // Delete a line from backend and local state
+    const deleteLine = useCallback(async (lineNo: number): Promise<boolean> => {
+        try {
+            const res = await fetch(`http://localhost:8000/api/projects/${projectId}/lines/delete`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ line_no: lineNo, nusha_index: nushaIndex })
+            });
+            if (!res.ok) return false;
+
+            // Remove from local data state
+            if (data) {
+                const newData = { ...data };
+                const keys: (keyof MukabeleData)[] = ['aligned', 'aligned_alt', 'aligned_alt3', 'aligned_alt4'];
+                for (const key of keys) {
+                    const arr = newData[key] as LineData[] | undefined;
+                    if (arr) {
+                        (newData as any)[key] = arr.filter(l => l.line_no !== lineNo);
+                    }
+                }
+                setData(newData);
+            }
+
+            // Remove from pages state
+            setPages(prev => prev.map(page => ({
+                ...page,
+                lines: page.lines.filter(l => l.line_no !== lineNo)
+            })));
+
+            // If deleted line was active, clear selection
+            if (activeLine === lineNo) {
+                setActiveLine(null);
+            }
+
+            return true;
+        } catch (err) {
+            console.error("Delete line error:", err);
+            return false;
+        }
+    }, [projectId, nushaIndex, data, activeLine]);
+
     // Derived Data
     const lines = React.useMemo(() => {
         if (!data) return [];
@@ -375,6 +417,72 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
+    // ── Keyboard Shortcuts ──
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Skip if user is typing in an editable field
+            const tag = (e.target as HTMLElement)?.tagName;
+            const isEditable = (e.target as HTMLElement)?.isContentEditable;
+            if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || isEditable) {
+                // Only intercept Ctrl+S inside editable fields
+                if (e.ctrlKey && e.key === "s") {
+                    e.preventDefault();
+                }
+                return;
+            }
+
+            // Ctrl+S: prevent default browser save
+            if (e.ctrlKey && e.key === "s") {
+                e.preventDefault();
+                return;
+            }
+
+            // Arrow Up / Down: navigate lines
+            if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                e.preventDefault();
+                const currentPage = pages.find(p => p.key === activePageKeyRef.current);
+                if (!currentPage || !currentPage.lines.length) return;
+                const pageLines = currentPage.lines;
+                const currentIdx = pageLines.findIndex(l => l.line_no === activeLine);
+
+                if (e.key === "ArrowUp") {
+                    const prev = currentIdx > 0 ? currentIdx - 1 : 0;
+                    setActiveLineWithSync(pageLines[prev].line_no);
+                } else {
+                    const next = currentIdx < pageLines.length - 1 ? currentIdx + 1 : pageLines.length - 1;
+                    setActiveLineWithSync(pageLines[next].line_no);
+                }
+                return;
+            }
+
+            // Arrow Left / Right: navigate pages
+            if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                e.preventDefault();
+                const pageIdx = pages.findIndex(p => p.key === activePageKeyRef.current);
+                if (e.key === "ArrowLeft" && pageIdx > 0) {
+                    setActivePageKey(pages[pageIdx - 1].key);
+                } else if (e.key === "ArrowRight" && pageIdx < pages.length - 1) {
+                    setActivePageKey(pages[pageIdx + 1].key);
+                }
+                return;
+            }
+
+            // E: jump to next error line
+            if (e.key === "e" || e.key === "E") {
+                const errorLineNos = lines
+                    .filter(l => l.line_marks && l.line_marks.length > 0)
+                    .map(l => l.line_no);
+                if (!errorLineNos.length) return;
+                const currentIdx = errorLineNos.indexOf(activeLine ?? -1);
+                const nextIdx = (currentIdx + 1) % errorLineNos.length;
+                setActiveLineWithSync(errorLineNos[nextIdx]);
+                return;
+            }
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [pages, activeLine, lines]);
 
     // Effect: Removed automatic sync to prevent reverts on autosave.
     // Page sync is now handled explicitly by setActiveLineWithSync.
@@ -395,6 +503,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
         nushaIndex, setNushaIndex,
         splitRatio, setSplitRatio,
         updateLineText,
+        deleteLine,
     };
 
     return (

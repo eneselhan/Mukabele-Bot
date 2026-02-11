@@ -3,14 +3,13 @@
 import React, { useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { MukabeleProvider, useMukabele } from "@/components/mukabele/MukabeleContext";
+import { TTSProvider } from "@/components/mukabele/TTSContext";
 import SplitPane from "@/components/mukabele/SplitPane";
-import ControlBar from "@/components/mukabele/ControlBar";
 import PageCanvas from "@/components/mukabele/PageCanvas";
 import LineList from "@/components/mukabele/LineList";
-import { ArrowLeft, BookOpen } from "lucide-react";
-
+import ImagePanelToolbar from "@/components/mukabele/ImagePanelToolbar";
 import ErrorPopup from "@/components/mukabele/ErrorPopup";
-import FloatingNav from "@/components/mukabele/FloatingNav";
+import { ArrowLeft, BookOpen, Keyboard } from "lucide-react";
 
 function MukabeleContent() {
     const params = useParams();
@@ -19,7 +18,8 @@ function MukabeleContent() {
     const {
         data, setData,
         isLoading, setIsLoading,
-        pages
+        lines, pages,
+        nushaIndex, setNushaIndex,
     } = useMukabele();
 
     useEffect(() => {
@@ -36,63 +36,140 @@ function MukabeleContent() {
             });
     }, [projectId, setData, setIsLoading]);
 
+    // Progress calculation
+    const totalLines = lines.length;
+    const errorLines = lines.filter(l => l.line_marks && l.line_marks.length > 0).length;
+    const cleanLines = totalLines - errorLines;
+    const progressPct = totalLines > 0 ? Math.round((cleanLines / totalLines) * 100) : 0;
+
     if (isLoading) {
         return (
-            <div className="flex h-screen items-center justify-center text-slate-500 bg-slate-50">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mr-3"></div>
-                Mukabele verileri yükleniyor...
+            <div className="flex h-screen items-center justify-center text-slate-400 bg-slate-900">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-500 mr-3"></div>
+                <span className="text-sm">Mukabele verileri yükleniyor...</span>
             </div>
         );
     }
 
     if (!data || !pages.length) {
         return (
-            <div className="flex h-screen flex-col items-center justify-center p-8 text-center bg-slate-50">
-                <h2 className="text-xl font-bold text-slate-800 mb-2">Veri Bulunamadı</h2>
+            <div className="flex h-screen flex-col items-center justify-center p-8 text-center bg-slate-900">
+                <BookOpen size={48} className="text-slate-600 mb-4" />
+                <h2 className="text-xl font-bold text-slate-300 mb-2">Veri Bulunamadı</h2>
                 <p className="text-slate-500 mb-6">Bu proje için henüz hizalanmış veri yok.</p>
-                <div className="flex gap-4">
-                    <button
-                        onClick={() => router.back()}
-                        className="px-4 py-2 bg-slate-200 text-slate-700 rounded hover:bg-slate-300"
-                    >
-                        Geri Dön
-                    </button>
-                    {/* Could trigger analysis here if needed */}
-                </div>
+                <button
+                    onClick={() => router.back()}
+                    className="px-4 py-2 bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 transition-colors"
+                >
+                    Geri Dön
+                </button>
             </div>
         );
     }
 
     return (
-        <div className="flex flex-col h-screen overflow-hidden bg-slate-50">
+        <div className="flex flex-col h-screen overflow-hidden bg-slate-900">
             <ErrorPopup />
-            <FloatingNav />
 
-            {/* Header */}
-            <header className="flex items-center justify-between px-4 py-2 bg-white border-b border-slate-200 shadow-sm z-20 h-[50px]">
-                <div className="flex items-center gap-4">
+            {/* ── Slim Dark Header ── */}
+            <header className="flex items-center justify-between px-4 bg-slate-950 border-b border-slate-800 z-20 h-[42px] shrink-0">
+                <div className="flex items-center gap-3">
                     <button
                         onClick={() => router.back()}
-                        className="p-1 hovered:bg-slate-100 rounded text-slate-500 hover:text-slate-800 transition-colors"
+                        className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
                         title="Projeye Dön"
                     >
-                        <ArrowLeft size={20} />
+                        <ArrowLeft size={18} />
                     </button>
-                    <h1 className="font-bold text-slate-800 flex items-center gap-2 text-sm md:text-base">
-                        <BookOpen size={18} className="text-blue-600" />
-                        Mukabele Ekranı
+                    <div className="h-5 w-px bg-slate-700" />
+                    <h1 className="font-semibold text-slate-200 flex items-center gap-2 text-sm">
+                        <BookOpen size={16} className="text-amber-500" />
+                        Mukabele
                     </h1>
                 </div>
-                {/* Extra header actions could go here */}
+
+                {/* Center: Nüsha selector */}
+                <div className="flex items-center gap-1.5">
+                    <button
+                        onClick={() => setNushaIndex(1)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${nushaIndex === 1
+                            ? "bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/20"
+                            : "bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700"
+                            }`}
+                    >
+                        Nüsha 1
+                    </button>
+                    {data.has_alt && (
+                        <button
+                            onClick={() => setNushaIndex(2)}
+                            className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${nushaIndex === 2
+                                ? "bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/20"
+                                : "bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700"
+                                }`}
+                        >
+                            Nüsha 2
+                        </button>
+                    )}
+                    {data.has_alt3 && (
+                        <button
+                            onClick={() => setNushaIndex(3)}
+                            className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${nushaIndex === 3
+                                ? "bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/20"
+                                : "bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700"
+                                }`}
+                        >
+                            Nüsha 3
+                        </button>
+                    )}
+                    {data.has_alt4 && (
+                        <button
+                            onClick={() => setNushaIndex(4)}
+                            className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${nushaIndex === 4
+                                ? "bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/20"
+                                : "bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700"
+                                }`}
+                        >
+                            Nüsha 4
+                        </button>
+                    )}
+                </div>
+
+                {/* Right: Progress bar + keyboard hint */}
+                <div className="flex items-center gap-3">
+                    {/* Progress */}
+                    <div className="flex items-center gap-2">
+                        <div className="w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 rounded-full transition-all duration-500"
+                                style={{ width: `${progressPct}%` }}
+                            />
+                        </div>
+                        <span className="text-[10px] text-slate-500 font-mono tabular-nums w-8">
+                            {progressPct}%
+                        </span>
+                    </div>
+
+                    {/* Keyboard hint */}
+                    <button
+                        className="p-1.5 text-slate-500 hover:text-slate-300 hover:bg-slate-800 rounded-lg transition-colors"
+                        title="Klavye Kısayolları: ↑↓ satır, ←→ sayfa, Space oynat/duraklat, E sonraki hata"
+                    >
+                        <Keyboard size={15} />
+                    </button>
+                </div>
             </header>
 
-            {/* Controls */}
-            <ControlBar />
-
-            {/* Main Content: Split Pane */}
+            {/* ── Main Content: Split Pane ── */}
             <div className="flex-1 overflow-hidden relative">
                 <SplitPane
-                    left={<PageCanvas />}
+                    left={
+                        <div className="flex flex-col h-full">
+                            <ImagePanelToolbar />
+                            <div className="flex-1 overflow-hidden">
+                                <PageCanvas />
+                            </div>
+                        </div>
+                    }
                     right={<LineList />}
                 />
             </div>
@@ -103,7 +180,9 @@ function MukabeleContent() {
 export default function MukabelePage() {
     return (
         <MukabeleProvider>
-            <MukabeleContent />
+            <TTSProvider>
+                <MukabeleContent />
+            </TTSProvider>
         </MukabeleProvider>
     );
 }

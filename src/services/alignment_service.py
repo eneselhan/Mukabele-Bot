@@ -269,12 +269,9 @@ class AlignmentService:
                 return []
 
             highlights = []
-            # Split by whitespace, keeping delimiters to track accurate offsets
-            # Regex group (\s+) captures separators
-            # Split by whitespace AND punctuation to match normalize_ar logic
-            # normalize_ar removes non-alphanumeric. We separate them so they don't merge with words.
-            # Regex: Capture delimiters (whitespace OR non-word/non-arabic chars)
-            tokens = re.split(r'(\s+|[^\u0600-\u06FF0-9A-Za-z]+)', text)
+            # Split by whitespace, matching strict split() logic used in injection
+            # Capture delimiters to keep character offsets accurate
+            tokens = re.split(r'(\s+)', text)
             
             char_idx = 0
             token_count = 0
@@ -283,9 +280,8 @@ class AlignmentService:
                 if not part:
                     continue
                 
-                # Check if it's purely whitespace or punctuation (non-word)
-                # We use normalize_ar to check if it contains any "word" characters
-                if not normalize_ar(part):
+                # Check if it's purely whitespace (matches split() logic)
+                if part.isspace():
                     char_idx += len(part)
                     continue
                 
@@ -344,9 +340,8 @@ class AlignmentService:
 
                 # 3. Inject page_image for frontend sync
                 # We need to link this line to a page.
-                # line_image usually looks like: .../page_0001_01R_line_001.png
-                # We want: page_0001_01R.png
-                if line_image:
+                # Only if page_image is missing or empty
+                if not item.get("page_image") and line_image:
                     try:
                         p_name = Path(line_image).name
                         # Standard Kraken/Tahkik naming: {page}_line_{idx}.png

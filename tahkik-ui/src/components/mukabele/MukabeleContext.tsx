@@ -284,7 +284,15 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
 
                     currentLines.forEach(line => {
                         if (!line.page_image) return;
-                        const target = newPages.find(p => p.page_image === line.page_image);
+
+                        // Normalize filenames for comparison (handle paths vs filenames)
+                        const linePageName = line.page_image.replace(/\\/g, "/").split("/").pop();
+
+                        const target = newPages.find(p => {
+                            const pPageName = p.page_image.replace(/\\/g, "/").split("/").pop();
+                            return pPageName === linePageName;
+                        });
+
                         if (target) {
                             target.lines.push(line);
                         }

@@ -96,7 +96,7 @@ export default function PageCanvas() {
             className="w-full h-full overflow-auto bg-slate-100 relative text-center p-4"
         >
             <div
-                className="relative inline-block transition-all duration-200 origin-top"
+                className="relative inline-block transition-all duration-200 origin-top rounded shadow-sm border border-slate-200 overflow-hidden"
                 style={{
                     width: `${zoom * 100}%`,
                 }}
@@ -106,7 +106,7 @@ export default function PageCanvas() {
                     <img
                         src={imageUrl}
                         alt={currentPage.page_name}
-                        className="w-full block rounded shadow-sm border border-slate-200"
+                        className="w-full block"
                         onLoad={handleImgLoad}
                     />
                 )}
@@ -114,7 +114,7 @@ export default function PageCanvas() {
                 {/* SVG Overlay */}
                 {imgLoaded && (
                     <svg
-                        className="absolute inset-0 w-full h-full pointer-events-auto"
+                        className="absolute top-0 left-0 w-full h-full pointer-events-auto"
                         viewBox={`0 0 ${naturalSize.w} ${naturalSize.h}`}
                     >
                         {/* Mask Definition for Darkening */}

@@ -503,20 +503,20 @@ def _backfill_from_manifest(lines_list: List[Dict], manifest_path: Path):
         if fname in manifest_map:
             rec = manifest_map[fname]
             
-            # 1. Backfill BBox if missing
-            if "bbox" not in item:
+            # 1. Backfill BBox if missing or null
+            if item.get("bbox") is None:
                 item["bbox"] = rec.get("bbox")
                 
             # 2. Backfill Page Image (Critical for page mapping)
             # The manifest has full path, we might want just filename or relative
             # Frontend PageCanvas expects just filename in some places.
-            if "page_image" not in item:
+            if not item.get("page_image"):
                 p_img = rec.get("page_image", "")
                 if p_img:
                     item["page_image"] = Path(p_img).name # Use filename for safer matching
                     
             # 3. Page Name (Optional)
-            if "page_name" not in item:
+            if not item.get("page_name"):
                 # Infer from page_image filename
                 p_img = item.get("page_image", "")
                 if p_img:
@@ -599,6 +599,7 @@ def get_mukabele_data(project_id: str):
             ]
         
         final_data["aligned"] = filter_preface(final_data["aligned"])
+
         final_data["aligned_alt"] = filter_preface(final_data["aligned_alt"])
         final_data["aligned_alt3"] = filter_preface(final_data["aligned_alt3"])
         final_data["aligned_alt4"] = filter_preface(final_data["aligned_alt4"])

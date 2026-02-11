@@ -1,134 +1,144 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { BookOpen, ArrowRight, Layers, Eye, FileText, Sparkles, CheckCircle } from "lucide-react";
 
-interface Project {
-  id: string;
-  name: string;
-  created_at?: string;
-  has_alignment?: boolean;
-}
-
-export default function DashboardPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
-  const router = useRouter();
-
-  useEffect(() => {
-    fetch("http://localhost:8000/api/projects")
-      .then((res) => res.json())
-      .then((data) => {
-        setProjects(data);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error("Proje listesi alınamadı:", err);
-        setLoading(false);
-      });
-  }, []);
-
-  const handleCreateProject = async () => {
-    const name = window.prompt("Yeni proje adı:");
-    if (!name) return;
-
-    try {
-      const res = await fetch("http://localhost:8000/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-
-      if (!res.ok) throw new Error("Proje oluşturulamadı");
-
-      const newProject = await res.json();
-      router.push(`/projects/${newProject.id}/process`);
-    } catch (err) {
-      alert("Hata: " + err);
-    }
-  };
-
-  const handleDeleteProject = async (id: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    if (!confirm("Bu projeyi silmek istediğinize emin misiniz?")) return;
-
-    try {
-      const res = await fetch(`http://localhost:8000/api/projects/${id}`, {
-        method: "DELETE",
-      });
-
-      if (!res.ok) throw new Error("Proje silinemedi");
-
-      setProjects((prev) => prev.filter((p) => p.id !== id));
-    } catch (err) {
-      alert("Silme işlemi başarısız: " + err);
-    }
-  };
-
-  if (loading) return <div className="p-10 text-center text-gray-500">Yükleniyor...</div>;
-
+export default function LandingPage() {
   return (
-    <main className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold text-gray-800">Projelerim</h1>
-          <button
-            onClick={handleCreateProject}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition shadow-sm"
-          >
-            + Yeni Proje
-          </button>
-        </div>
-
-        {projects.length === 0 ? (
-          <div className="text-center py-16 bg-white rounded-lg shadow-sm border border-gray-100 text-gray-500">
-            Henüz hiç proje yok. Yeni bir tane oluşturun!
+    <main className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-purple-50/30">
+      {/* Navbar */}
+      <nav className="border-b border-slate-100 bg-white/80 backdrop-blur-sm sticky top-0 z-20">
+        <div className="max-w-5xl mx-auto px-6 py-3 flex justify-between items-center">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-purple-600 flex items-center justify-center text-white shadow-sm shadow-purple-200">
+              <BookOpen size={16} />
+            </div>
+            <span className="text-base font-extrabold text-slate-800 tracking-tight">Tahkik Bot</span>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {projects.map((p) => (
-              <div key={p.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition group">
-                <div className="flex justify-between items-start mb-3">
-                  <h2 className="text-lg font-semibold text-gray-900 truncate" title={p.name}>{p.name}</h2>
-                  <button
-                    onClick={(e) => handleDeleteProject(p.id, e)}
-                    className="text-gray-300 hover:text-red-500 transition-colors p-1"
-                    title="Projeyi Sil"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                    </svg>
-                  </button>
-                </div>
+          <Link
+            href="/projects"
+            className="text-sm font-bold text-purple-600 hover:text-purple-700 transition-colors"
+          >
+            Projelerim →
+          </Link>
+        </div>
+      </nav>
 
-                <div className="flex gap-2 text-sm">
-                  <Link
-                    href={`/projects/${p.id}/process`}
-                    className="flex-1 block text-center bg-gray-100 text-gray-700 py-2 rounded hover:bg-gray-200 transition-colors"
-                  >
-                    Analiz
-                  </Link>
-                  {p.has_alignment ? (
-                    <Link
-                      href={`/projects/${p.id}/editor`}
-                      className="flex-1 block text-center bg-slate-800 text-white py-2 rounded hover:bg-slate-700 transition-colors"
-                    >
-                      Mukabele
-                    </Link>
-                  ) : (
-                    <span
-                      title="Analiz tamamlanmadan mukabele yapılamaz"
-                      className="flex-1 block text-center bg-gray-50 text-gray-300 py-2 rounded cursor-not-allowed border border-gray-100"
-                    >
-                      Mukabele
-                    </span>
-                  )}
+      {/* Hero */}
+      <section className="max-w-5xl mx-auto px-6 pt-16 pb-12">
+        <div className="text-center max-w-2xl mx-auto">
+          <div className="inline-flex items-center gap-1.5 bg-purple-100 text-purple-700 px-3 py-1 rounded-full text-xs font-bold mb-5">
+            <Sparkles size={12} />
+            AI Destekli Yazma Analizi
+          </div>
+          <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 leading-tight tracking-tight">
+            Yazma Eserleri İçin
+            <br />
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-indigo-600">
+              Akıllı Mukabele Sistemi
+            </span>
+          </h1>
+          <p className="text-slate-500 mt-5 text-base leading-relaxed max-w-lg mx-auto">
+            PDF yazma eserlerinizi yükleyin, yapay zeka ile satır satır OCR yapın,
+            referans metinle otomatik hizalayın ve nüshaları karşılaştırın.
+          </p>
+
+          <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
+            <Link
+              href="/projects"
+              className="bg-purple-600 text-white px-6 py-3 rounded-xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-200 flex items-center gap-2 text-sm font-bold group"
+            >
+              Mukabele Projesi Başlat
+              <ArrowRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* How It Works */}
+      <section className="max-w-5xl mx-auto px-6 pb-16">
+        <h2 className="text-center text-sm font-bold text-slate-400 uppercase tracking-widest mb-8">Nasıl Çalışır</h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {[
+            {
+              icon: <FileText size={22} />,
+              step: "1",
+              title: "Dosya Yükleme",
+              desc: "Yazma eseri PDF'lerini ve referans Word metnini yükleyin."
+            },
+            {
+              icon: <Layers size={22} />,
+              step: "2",
+              title: "Segmentasyon",
+              desc: "Sayfalar otomatik olarak satırlara ayrılır (Kraken AI)."
+            },
+            {
+              icon: <Eye size={22} />,
+              step: "3",
+              title: "OCR & Hizalama",
+              desc: "Google Vision ile metin tanıma ve referans metinle hizalama yapılır."
+            },
+            {
+              icon: <CheckCircle size={22} />,
+              step: "4",
+              title: "Mukabele",
+              desc: "Nüshaları yan yana karşılaştırın ve farkları inceleyin."
+            }
+          ].map((item) => (
+            <div key={item.step} className="bg-white border border-slate-200 rounded-xl p-5 hover:shadow-md hover:border-purple-200 transition-all group">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-9 h-9 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors">
+                  {item.icon}
                 </div>
+                <span className="text-[11px] font-extrabold text-slate-300 uppercase">Adım {item.step}</span>
+              </div>
+              <h3 className="text-sm font-bold text-slate-800 mb-1">{item.title}</h3>
+              <p className="text-xs text-slate-400 leading-relaxed">{item.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Features Grid */}
+      <section className="max-w-5xl mx-auto px-6 pb-16">
+        <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-8 text-white">
+          <h2 className="text-lg font-bold mb-6">Öne Çıkan Özellikler</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {[
+              { title: "Çoklu Nüsha Desteği", desc: "Birden fazla yazma nüshasını aynı projede yönetin." },
+              { title: "Sürükle-Bırak Sıralama", desc: "Nüsha sıralamasını kolayca değiştirin." },
+              { title: "Adım Adım Pipeline", desc: "Her analiz adımını bağımsız olarak başlatın." },
+              { title: "Otomatik Hizalama", desc: "OCR çıktısını referans metinle DP algoritması ile hizalayın." },
+              { title: "Satır Düzenleme", desc: "Mukabele ekranından metni doğrudan düzenleyin." },
+              { title: "Toplu Yükleme", desc: "Birden fazla PDF'i aynı anda yükleyin." }
+            ].map((f, i) => (
+              <div key={i} className="bg-white/10 rounded-lg p-4 hover:bg-white/15 transition-colors">
+                <h3 className="text-sm font-bold mb-1">{f.title}</h3>
+                <p className="text-xs text-white/60 leading-relaxed">{f.desc}</p>
               </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      </section>
+
+      {/* Footer CTA */}
+      <section className="max-w-5xl mx-auto px-6 pb-12">
+        <div className="text-center">
+          <p className="text-sm text-slate-400 mb-3">Hemen başlayın</p>
+          <Link
+            href="/projects"
+            className="inline-flex items-center gap-2 bg-purple-600 text-white px-5 py-2.5 rounded-xl hover:bg-purple-700 transition-all shadow-sm text-sm font-bold"
+          >
+            Projelerime Git
+            <ArrowRight size={14} />
+          </Link>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="border-t border-slate-100 py-4 text-center text-[11px] text-slate-300">
+        Tahkik Bot © 2025 — Yazma Eserleri Mukabele Sistemi
+      </footer>
     </main>
   );
 }

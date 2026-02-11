@@ -34,6 +34,9 @@ def align_ocr_to_tahkik_segment_dp(
     Yöntem: Global Sequence Alignment (Word-Level).
     """
     
+    # Debug log — captures real intermediate data from each step
+    debug_log = []
+
     # 1. Kaynakları Yükle
     if status_callback:
         status_callback("Tahkik metni ve OCR verisi yükleniyor...", "INFO")
@@ -52,6 +55,29 @@ def align_ocr_to_tahkik_segment_dp(
 
     M = len(tahkik_tokens)
     N = len(ocr_lines)
+
+    debug_log.append({
+        "name": "read_docx_text",
+        "description": "Word dosyasından ham metin okuma",
+        "output": f"{len(tahkik_raw)} karakter okundu → {M} kelime (token)",
+        "data": {
+            "char_count": len(tahkik_raw),
+            "token_count": M,
+            "first_50_tokens": tahkik_tokens[:50],
+            "last_20_tokens": tahkik_tokens[-20:],
+            "docx_path": str(docx_path),
+        }
+    })
+    debug_log.append({
+        "name": "load_ocr_lines_ordered",
+        "description": "OCR satırlarını yükleme (manifest + ocr/)",
+        "output": f"{N} satır yüklendi, toplam kelime sayısı hesaplanacak",
+        "data": {
+            "line_count": N,
+            "first_5_lines": [{"line_no": i+1, "ocr_text": (ocr_lines[i].get('ocr_text') or '')[:100]} for i in range(min(5, N))],
+            "last_5_lines": [{"line_no": N-4+i, "ocr_text": (ocr_lines[N-5+i].get('ocr_text') or '')[:100]} for i in range(min(5, N))],
+        }
+    })
 
     # 2. Normalizasyon ve Flattening (Düzleştirme)
     # Global hizalama için tüm OCR satırlarını tek bir kelime listesi yapıyoruz.
@@ -87,6 +113,23 @@ def align_ocr_to_tahkik_segment_dp(
     if K == 0:
         raise RuntimeError("OCR metni tamamen boş.")
 
+    # Count empty lines for debug
+    empty_ocr_lines = sum(1 for item in ocr_lines if not (item.get('ocr_text') or '').strip())
+
+    debug_log.append({
+        "name": "normalize_ar + flatten",
+        "description": "Arapça normalizasyon ve tüm OCR satırlarını düz token listesine çevirme",
+        "output": f"{K} OCR token (flat) | {M} Word token | {empty_ocr_lines} boş satır",
+        "data": {
+            "ocr_flat_token_count": K,
+            "tahkik_token_count": M,
+            "empty_ocr_lines": empty_ocr_lines,
+            "ratio": round(K / max(M, 1), 3),
+            "sample_norms_tahkik": tahkik_norms[:20],
+            "sample_norms_ocr": ocr_flat_norms[:20],
+        }
+    })
+
     if status_callback:
         status_callback(f"Hizalama başlıyor: {M} kelime (Word) vs {K} kelime (OCR)...", "INFO")
 
@@ -97,11 +140,7 @@ def align_ocr_to_tahkik_segment_dp(
     unique_words = sorted(list(set([w for w in tahkik_norms if w] + [w for w in ocr_flat_norms if w])))
     word2char = {w: chr(0xE000 + i) for i, w in enumerate(unique_words)}
     
-    # Boş string (normalize sonucu boşalanlar) için özel bir karakter atamaya gerek yok, atlayabiliriz
-    # ama indeks kaymasın diye dummy bir karakter verelim veya boş string olarak birleştirelim.
-    # Burada indekslerin korunması kritik. Boş normları 'bilinmeyen' bir karaktere eşleyelim.
-    # IMPORTANT: 0xD800-0xDFFF are surrogate code points; avoid them (can crash native libs).
-    NULL_CHAR = chr(0xFFFF)  # safe sentinel (noncharacter but valid scalar)
+    NULL_CHAR = chr(0xFFFF)
     
     def encode_tokens(token_list):
         chars = []
@@ -114,50 +153,104 @@ def align_ocr_to_tahkik_segment_dp(
         
     tahkik_str = encode_tokens(tahkik_norms)
     ocr_str = encode_tokens(ocr_flat_norms)
+
+    # Count how many are only in one side
+    tahkik_word_set = set(w for w in tahkik_norms if w)
+    ocr_word_set = set(w for w in ocr_flat_norms if w)
+    common_words = tahkik_word_set & ocr_word_set
+    only_tahkik = tahkik_word_set - ocr_word_set
+    only_ocr = ocr_word_set - tahkik_word_set
+
+    debug_log.append({
+        "name": "encode_tokens",
+        "description": "Unique kelimeleri karakter kodlarına dönüştürme (Levenshtein için)",
+        "output": f"{len(unique_words)} unique kelime | {len(common_words)} ortak | {len(only_tahkik)} sadece Word'de | {len(only_ocr)} sadece OCR'de",
+        "data": {
+            "unique_word_count": len(unique_words),
+            "common_words": len(common_words),
+            "only_in_tahkik": len(only_tahkik),
+            "only_in_ocr": len(only_ocr),
+            "sample_only_tahkik": sorted(list(only_tahkik))[:20],
+            "sample_only_ocr": sorted(list(only_ocr))[:20],
+        }
+    })
     
     # 4. Global Alignment (EditOps / Opcodes)
-    # OCR stringini Tahkik stringine dönüştüren adımları bul.
-    # opcodes: list of (tag, i1, i2, j1, j2)
-    # i: ocr (src), j: tahkik (dest)
     try:
-        opcodes = Levenshtein.opcodes(ocr_str, tahkik_str)
+        opcodes = list(Levenshtein.opcodes(ocr_str, tahkik_str))
     except Exception as e:
-        # Fallback: Çok büyük metinlerde bellek sorunu olursa
         print(f"Global hizalama hatası (fallback yapılacak): {e}")
-        # Basit oran orantı fallback (bunu kodlamak uzun sürer, genelde hata vermez)
         raise e
 
+    # Opcode statistics
+    op_stats = {"equal": 0, "replace": 0, "insert": 0, "delete": 0}
+    op_char_counts = {"equal": 0, "replace_src": 0, "replace_dst": 0, "insert": 0, "delete": 0}
+    for tag, i1, i2, j1, j2 in opcodes:
+        op_stats[tag] = op_stats.get(tag, 0) + 1
+        if tag == 'equal':
+            op_char_counts["equal"] += (i2 - i1)
+        elif tag == 'replace':
+            op_char_counts["replace_src"] += (i2 - i1)
+            op_char_counts["replace_dst"] += (j2 - j1)
+        elif tag == 'insert':
+            op_char_counts["insert"] += (j2 - j1)
+        elif tag == 'delete':
+            op_char_counts["delete"] += (i2 - i1)
+
+    total_ops = sum(op_stats.values())
+    equal_ratio = round(op_char_counts["equal"] / max(K, 1) * 100, 1)
+
+    debug_log.append({
+        "name": "Levenshtein.opcodes",
+        "description": "Global edit distance hizalaması (OCR→Word)",
+        "output": f"{total_ops} opcode | equal:{op_stats.get('equal',0)} replace:{op_stats.get('replace',0)} insert:{op_stats.get('insert',0)} delete:{op_stats.get('delete',0)} | Eşleşme oranı: %{equal_ratio}",
+        "data": {
+            "opcode_counts": op_stats,
+            "char_counts": op_char_counts,
+            "total_opcodes": total_ops,
+            "equal_ratio_pct": equal_ratio,
+            "first_20_opcodes": [(tag, i1, i2, j1, j2) for tag, i1, i2, j1, j2 in opcodes[:20]],
+        }
+    })
+
     # 5. Milestone Extraction (Anchor Points)
-    # Hangi OCR flat index'i hangi Tahkik index'ine kesin (equal) denk geliyor?
-    ocr_to_tahkik_matches = {} # flat_ocr_idx -> tahkik_idx
+    ocr_to_tahkik_matches = {}
     
     for tag, i1, i2, j1, j2 in opcodes:
         if tag == 'equal':
-            # Aralık eşleşmesi
             count = i2 - i1
             for k in range(count):
-                # NULL_CHAR eşleşmelerini güvenilir sayma (görültü olabilir)
                 if ocr_str[i1 + k] != NULL_CHAR:
                     ocr_to_tahkik_matches[i1 + k] = j1 + k
 
+    anchor_count = len(ocr_to_tahkik_matches)
+    anchor_coverage = round(anchor_count / max(K, 1) * 100, 1)
+
+    debug_log.append({
+        "name": "milestone_extraction",
+        "description": "Anchor noktaları / kesin eşleşen kelimeler",
+        "output": f"{anchor_count} anchor bulundu (OCR tokenlerinin %{anchor_coverage}'ı)",
+        "data": {
+            "anchor_count": anchor_count,
+            "total_ocr_tokens": K,
+            "coverage_pct": anchor_coverage,
+        }
+    })
+
     # 6. Satır Sınırlarını Belirleme (Refinement & Interpolation)
-    line_segments = [] # (start_idx, end_idx) for each line
+    line_segments = []
     
-    # Her satırın "kesin" sınırlarını bul (matches üzerinden)
-    # Eğer eşleşme yoksa None
     raw_bounds = []
     for line_idx in range(N):
         info = line_boundaries[line_idx]
         s, e = info["start"], info["end"]
         
-        # Bu satıra ait eşleşen indeksleri topla
         matched_tindices = []
         for fi in range(s, e):
             if fi in ocr_to_tahkik_matches:
                 matched_tindices.append(ocr_to_tahkik_matches[fi])
         
         if matched_tindices:
-            # Satırın Word'deki en erken ve en geç eşleşmesi
             raw_bounds.append((min(matched_tindices), max(matched_tindices) + 1))
         else:
             raw_bounds.append(None)
@@ -244,29 +337,49 @@ def align_ocr_to_tahkik_segment_dp(
             last_valid_end = current_cursor
             i = j # Döngüyü j'den devam ettir
 
+    # Count interpolated lines
+    none_count = sum(1 for b in raw_bounds if b is None)
+    debug_log.append({
+        "name": "line_boundary_refinement",
+        "description": "Satır sınırlarını anchor'lara göre belirleme + interpolasyon",
+        "output": f"{N - none_count}/{N} satırın doğrudan eşleşmesi var, {none_count} satır interpolasyonla dolduruldu",
+        "data": {
+            "matched_lines": N - none_count,
+            "interpolated_lines": none_count,
+            "total_lines": N,
+            "sample_bounds": [(i+1, final_bounds[i]) for i in range(min(20, N))],
+        }
+    })
+
     # Gap Closing (Son Düzeltme)
-    # Bitişik satırlar arasında hizalanmamış kelimeler kaldıysa, bunları dağıt.
-    # k. satır bitişi ile k+1. satır başlangıcı arasında boşluk varsa, ortadan böl.
+    gap_count = 0
+    overlap_count = 0
     for i in range(N - 1):
         curr_s, curr_e = final_bounds[i]
         next_s, next_e = final_bounds[i+1]
         
         if curr_e < next_s:
-            # Arada boşluk var
+            gap_count += 1
             mid = (curr_e + next_s) // 2
             final_bounds[i] = (curr_s, mid)
             final_bounds[i+1] = (mid, next_e)
         elif curr_e > next_s:
-            # Çakışma var (overlap) -> Ortadan kes
-            mid = (curr_s + next_e) // 2 # Hatalı mantık olabilir, basitçe:
-            # curr_e geriye, next_s ileriye alınmalı? 
-            # Basitçe: curr_e = next_s yap.
-            # Veya: mid = (curr_e + next_s) // 2
+            overlap_count += 1
             mid = (curr_e + next_s) // 2
             if mid < curr_s: mid = curr_s
             if mid > next_e: mid = next_e
             final_bounds[i] = (curr_s, mid)
             final_bounds[i+1] = (mid, next_e)
+
+    debug_log.append({
+        "name": "gap_closing",
+        "description": "Bitişik satırlar arası boşluk/çakışma düzeltmesi",
+        "output": f"{gap_count} boşluk kapatıldı, {overlap_count} çakışma düzeltildi",
+        "data": {
+            "gaps_closed": gap_count,
+            "overlaps_fixed": overlap_count,
+        }
+    })
 
     # 7. Sonuçları Oluştur ve Skorla
     spell_errors = (spellcheck_payload or {}).get("errors_merged", []) if spellcheck_payload else []
@@ -330,6 +443,33 @@ def align_ocr_to_tahkik_segment_dp(
             "seg_wc": len(seg_raw.split())
         })
 
+    # Score statistics for debug
+    scores = [r["best"]["score"] for r in aligned_results]
+    avg_score = sum(scores) / max(len(scores), 1)
+    low_score_lines = [r for r in aligned_results if r["best"]["score"] < 0.3]
+    empty_ocr_count = sum(1 for r in aligned_results if r["is_empty_ocr"])
+
+    debug_log.append({
+        "name": "score_segment",
+        "description": "Her satır için hizalama skoru hesaplama",
+        "output": f"Ortalama skor: {avg_score:.3f} | Min: {min(scores):.3f} | Max: {max(scores):.3f} | Düşük skorlu (<0.3): {len(low_score_lines)} satır | Boş OCR: {empty_ocr_count}",
+        "data": {
+            "avg_score": round(avg_score, 4),
+            "min_score": round(min(scores), 4),
+            "max_score": round(max(scores), 4),
+            "low_score_count": len(low_score_lines),
+            "empty_ocr_count": empty_ocr_count,
+            "low_score_lines": [{"line_no": r["line_no"], "score": round(r["best"]["score"], 4), "ocr_text": r["ocr_text"][:80], "ref_text": r["best"]["raw"][:80]} for r in low_score_lines[:15]],
+            "score_histogram": {
+                "0.0-0.2": sum(1 for s in scores if s < 0.2),
+                "0.2-0.4": sum(1 for s in scores if 0.2 <= s < 0.4),
+                "0.4-0.6": sum(1 for s in scores if 0.4 <= s < 0.6),
+                "0.6-0.8": sum(1 for s in scores if 0.6 <= s < 0.8),
+                "0.8-1.0": sum(1 for s in scores if s >= 0.8),
+            }
+        }
+    })
+
     # 8. Payload Hazırla ve Kaydet
     payload = {
         "algo_version": ALGO_VERSION,
@@ -338,7 +478,8 @@ def align_ocr_to_tahkik_segment_dp(
         "tahkik_tokens": tahkik_tokens,
         "lines_count": N,
         "aligned": aligned_results,
-        "spellcheck": spell_errors
+        "spellcheck": spell_errors,
+        "debug_log": debug_log,
     }
     
     if write_json:

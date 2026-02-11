@@ -3,6 +3,7 @@ import json
 import shutil
 from pathlib import Path
 from typing import List, Dict, Optional
+from fastapi import UploadFile
 from src.config import PROJECTS_DIR
 
 class ProjectManager:
@@ -15,10 +16,9 @@ class ProjectManager:
         self.projects_dir = PROJECTS_DIR
         self.projects_dir.mkdir(parents=True, exist_ok=True)
 
-    def create_project(self, name: str) -> str:
+    def create_project(self, name: str, authors: List[str] = [], language: str = "Ottoman Turkish", subject: str = "Islamic Studies", description: str = "") -> str:
         """
-        Creates a new project with a unique ID.
-        Sets up the directory structure and saves initial metadata.
+        Creates a new project with a unique ID and extended metadata.
         """
         project_id = str(uuid.uuid4())
         project_path = PROJECTS_DIR / project_id
@@ -30,7 +30,11 @@ class ProjectManager:
         metadata = {
             "id": project_id,
             "name": name,
-            "created_at": None, # Could add timestamp if needed, but keeping it simple as per spec
+            "authors": authors,
+            "language": language,
+            "subject": subject,
+            "description": description,
+            "created_at": None, 
             "nushalar": []
         }
         
@@ -160,16 +164,23 @@ class ProjectManager:
         metadata = self.get_metadata(project_id)
         nusha_names = metadata.get("nusha_names", {})
 
-        for i in range(1, 5):
-            n_path = project_path / f"nusha_{i}"
+        # Dynamically find nusha folders
+        nusha_dirs = sorted(list(project_path.glob("nusha_*")), key=lambda p: int(p.name.split("_")[1]) if p.name.split("_")[1].isdigit() else 999)
+
+        for n_path in nusha_dirs:
+            if not n_path.is_dir(): continue
+            
+            try:
+                parts = n_path.name.split("_")
+                if len(parts) != 2 or not parts[1].isdigit(): continue
+                i = int(parts[1])
+            except:
+                continue
+
             # Check for any PDF in the nusha directory
             pdf_files = list(n_path.glob("*.pdf"))
             source_exists = len(pdf_files) > 0
             
-            # Store filename in config/metadata if found and not already there?
-            # Actually, save_uploaded_file updates metadata, so we rely on that.
-            # But let's check if the filename in metadata matches the file on disk? 
-            # For now, just existence check is enough.
             filename = pdf_files[0].name if pdf_files else None
             
             # İşlem durumunu kontrol et (lines klasörü varsa OCR yapılmış demektir)
@@ -193,7 +204,7 @@ class ProjectManager:
                 "id": i,
                 "name": display_name,
                 "uploaded": source_exists,
-                "filename": filename, # Add filename here
+                "filename": filename,
                 "ready_for_ocr": source_exists,
                 "ready_for_align": has_tahkik and lines_exists,
                 "progress": progress_data
@@ -205,62 +216,53 @@ class ProjectManager:
             "nushas": nushas_status
         }
 
-    def save_uploaded_file(self, project_id: str, file_content: bytes, file_type: str, nusha_index: int, filename: str = None) -> Path:
+    def save_uploaded_file(self, project_id: str, file_content: bytes, file_type: str, nusha_index: int = 1, filename: str = "file"):
         """
-        Saves an uploaded file to the correct location based on its type.
-        Accepts file_content as bytes for robust handling.
+        Dosyayı projenin uygun klasörüne kaydeder.
+        file_content: Raw bytes of the uploaded file.
+        filename: Original filename from the upload.
+        nusha_index <= 0 ise yeni bir nusha indexi oluşturur.
         """
-        project_path = self.projects_dir / project_id
-        # Ensure project path exists
-        project_path.mkdir(parents=True, exist_ok=True)
+        project_path = self.get_project_path(project_id)
         
-        target_path = None
-
         if file_type == "docx":
-            # Word Dosyası -> Proje Köküne 'tahkik.docx' olarak
             target_path = project_path / "tahkik.docx"
-            print(f"[UPLOAD] Word dosyası kaydediliyor: {target_path}")
+            with open(target_path, "wb") as f:
+                f.write(file_content)
+            print(f"[UPLOAD] Word dosyası kaydedildi: {target_path} ({len(file_content)} bytes)")
+            return target_path, 1
             
-            # Dosyayı Yaz
-            with open(target_path, "wb") as buffer:
-                buffer.write(file_content)
-        
-        else:
-            # PDF Dosyası -> Nüsha Klasörüne Orijinal İsmiyle
+        elif file_type == "pdf":
+            # Yeni Nüsha Ekleme Mantığı
+            if nusha_index <= 0:
+                # Mevcut nushaları tara ve en büyük indexi bul
+                existing_nushas = list(project_path.glob("nusha_*"))
+                indices = []
+                for p in existing_nushas:
+                    try:
+                        indices.append(int(p.name.split("_")[1]))
+                    except:
+                        pass
+                
+                if indices:
+                    nusha_index = max(indices) + 1
+                else:
+                    nusha_index = 1
+            
             nusha_dir = project_path / f"nusha_{nusha_index}"
             nusha_dir.mkdir(parents=True, exist_ok=True)
             
-            # Eski dosyaları temizle (Sadece PDF'leri)
-            for old_pdf in nusha_dir.glob("*.pdf"):
-                try:
-                    old_pdf.unlink()
-                except Exception:
-                    pass
-
-            # Orijinal ismi al
-            original_name = filename or "the_manuscript.pdf"
+            # Dosya ismini koru
+            target_path = nusha_dir / filename
+            with open(target_path, "wb") as f:
+                f.write(file_content)
             
-            # Güvenli karakter kontrolü (Basit)
-            safe_name = "".join(c for c in original_name if c.isalnum() or c in "._- ")
-            if not safe_name: safe_name = "the_manuscript.pdf"
-
-            target_path = nusha_dir / safe_name
-            print(f"[UPLOAD] PDF dosyası kaydediliyor (Nüsha {nusha_index}): {target_path}")
-
-            # Dosyayı Yaz
-            try:
-                with open(target_path, "wb") as buffer:
-                    buffer.write(file_content)
-            except OSError:
-                print(f"[WARN] Dosya ismi geçersiz ({safe_name}), generic isim kullanılıyor.")
-                target_path = nusha_dir / "the_manuscript.pdf"
-                with open(target_path, "wb") as buffer:
-                    buffer.write(file_content)
-
+            print(f"[UPLOAD] PDF kaydedildi: {target_path} ({len(file_content)} bytes)")
+            
             # Metadata'ya dosya ismini kaydet
             self.update_nusha_config(project_id, nusha_index, {"filename": target_path.name})
             
-        return target_path
+        return target_path, nusha_index
 
 
     def delete_file(self, project_id: str, file_type: str, nusha_index: int = 1):
@@ -273,16 +275,34 @@ class ProjectManager:
             if tahkik_path.exists():
                 tahkik_path.unlink()
                 print(f"[DELETE] Referans metin silindi: {tahkik_path}")
-
-        elif file_type == "pdf":
-            # Nüsha PDF'ini VE oluşturulan tüm klasörleri (pages, lines, vb.) sil
-            nusha_path = project_path / f"nusha_{nusha_index}"
-            if nusha_path.exists():
+        
+        else:
+            nusha_dir = project_path / f"nusha_{nusha_index}"
+            if nusha_dir.exists():
                 import shutil
-                # Klasörün içini temizle ama klasör yapısını koru
-                shutil.rmtree(nusha_path)
-                nusha_path.mkdir()
-                print(f"[DELETE] Nüsha {nusha_index} verileri sıfırlandı.")
+                shutil.rmtree(nusha_dir)
+                print(f"[DELETE] Nüsha klasörü silindi: {nusha_dir}")
+
+    def update_nusha_order(self, project_id: str, new_order: List[int]):
+        """
+        Updates the display order of Nushas in metadata.
+        new_order: List of nusha IDs in the desired order.
+        """
+        project_path = self.get_project_path(project_id)
+        metadata_path = project_path / "metadata.json"
+        
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+            
+            metadata["nusha_order"] = new_order
+            
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[ERROR] Failed to update nusha order: {e}")
+
+
 
     def delete_project(self, project_id: str):
         """

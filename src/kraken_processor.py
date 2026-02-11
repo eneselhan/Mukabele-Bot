@@ -93,7 +93,7 @@ def load_line_records_ordered(manifest_path: Path = LINES_MANIFEST) -> List[Dict
                 recs.append(json.loads(ln))
 
     def keyfn(r: Dict[str, Any]):
-        page = r.get("page_name", "")
+        page = r.get("page_name", "") or Path(r.get("page_image", "")).stem
         bbox = r.get("bbox", [0, 0, 0, 0])
         y0 = int(bbox[1]) if isinstance(bbox, list) and len(bbox) >= 2 else 0
         return (page, y0, r.get("line_image", ""))

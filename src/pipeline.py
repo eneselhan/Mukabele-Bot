@@ -22,6 +22,88 @@ from src.ocr import ocr_lines_with_google_vision_api
 from src.keys import get_google_vision_api_key
 
 
+
+# =========================
+# 2. SEPARATE STAGES
+# =========================
+
+def run_segmentation(
+    pages_dir: Path,
+    lines_dir: Path,
+    lines_manifest: Path,
+    status_callback: Optional[Callable[[str, str], None]] = None
+):
+    """
+    Step 2: Line Segmentation (Kraken).
+    Reads page images from pages_dir, segments them, segments them, saves line images to lines_dir,
+    and writes metadata to lines_manifest.
+    """
+    if status_callback:
+        status_callback("Sayfalar satırlara bölünüyor (Kraken)...", "INFO")
+
+    # Initialize manifest
+    with lines_manifest.open("w", encoding="utf-8") as mf:
+        pass # Create/Clear file
+
+    page_files = sorted(list(pages_dir.glob("*.png")))
+    total_lines = 0
+
+    with lines_manifest.open("a", encoding="utf-8") as mf:
+        for idx, page_path in enumerate(page_files):
+            if status_callback and (idx + 1) % 5 == 0:
+                status_callback(f"  Sayfa {idx + 1}/{len(page_files)} işleniyor...", "INFO")
+            
+            records = split_page_to_lines(page_path, lines_dir=lines_dir)
+            total_lines += len(records)
+            for rec in records:
+                mf.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    if status_callback:
+        status_callback(f"✓ Segmentasyon tamamlandı: {len(page_files)} sayfadan {total_lines} satır çıkarıldı.", "INFO")
+    
+    return total_lines
+
+
+def run_ocr(
+    lines_manifest: Path,
+    ocr_dir: Path,
+    status_callback: Optional[Callable[[str, str], None]] = None
+):
+    """
+    Step 3: Text Recognition (Google Vision).
+    Reads line images from lines_manifest, performs OCR, and saves results to ocr_dir.
+    """
+    ordered_recs = load_line_records_ordered(manifest_path=lines_manifest)
+    ordered_line_paths = [Path(r["line_image"]) for r in ordered_recs]
+    
+    if not ordered_line_paths:
+        if status_callback:
+            status_callback("OCR yapılacak satır bulunamadı!", "ERROR")
+        return 0
+
+    if status_callback:
+        status_callback(f"OCR yapılıyor: {len(ordered_line_paths)} satır...", "INFO")
+        
+    vkey = get_google_vision_api_key()
+    ocr_ok, total = ocr_lines_with_google_vision_api(
+        ordered_line_paths,
+        api_key=vkey,
+        timeout=VISION_TIMEOUT,
+        retries=VISION_RETRIES,
+        backoff_base=VISION_BACKOFF_BASE,
+        max_dim=VISION_MAX_DIM,
+        jpeg_quality=VISION_JPEG_QUALITY,
+        sleep_s=0.10,
+        status_callback=status_callback,
+        ocr_dir=ocr_dir
+    )
+    
+    if status_callback:
+        status_callback(f"✓ OCR tamamlandı: {ocr_ok}/{total} başarılı", "INFO")
+
+    return ocr_ok
+
+
 # =========================
 # Pipeline
 # =========================
@@ -82,50 +164,12 @@ def run_pipeline(
     if status_callback:
         status_callback(f"✓ {len(pages)} sayfa PNG'e dönüştürüldü", "INFO")
 
-    if status_callback:
-        status_callback("Sayfalar satırlara bölünüyor (Kraken)...", "INFO")
-        
-    # 3. Pages -> Lines
-    # Initialize manifest
-    with lines_manifest.open("w", encoding="utf-8") as mf:
-        pass # Create/Clear file
+    # Step 2: Segmentation
+    total_lines = run_segmentation(pages_dir, lines_dir, lines_manifest, status_callback)
 
-    with lines_manifest.open("a", encoding="utf-8") as mf:
-        for idx, page in enumerate(pages):
-            if status_callback and (idx + 1) % 5 == 0:
-                status_callback(f"  Sayfa {idx + 1}/{len(pages)} işleniyor...", "INFO")
-            
-            records = split_page_to_lines(page, lines_dir=lines_dir)
-            for rec in records:
-                mf.write(json.dumps(rec, ensure_ascii=False) + "\n")
-
-    if status_callback:
-        status_callback("Satır kayıtları sıralanıyor...", "INFO")
-        
-    ordered_recs = load_line_records_ordered(manifest_path=lines_manifest)
-    ordered_line_paths = [Path(r["line_image"]) for r in ordered_recs]
-    
-    if status_callback:
-        status_callback(f"✓ {len(ordered_line_paths)} satır görseli hazır", "INFO")
-
+    # Step 3: OCR
     ocr_ok = 0
     if do_ocr:
-        if status_callback:
-            status_callback(f"OCR yapılıyor: {len(ordered_line_paths)} satır...", "INFO")
-        vkey = get_google_vision_api_key()
-        ocr_ok, total = ocr_lines_with_google_vision_api(
-            ordered_line_paths,
-            api_key=vkey,
-            timeout=VISION_TIMEOUT,
-            retries=VISION_RETRIES,
-            backoff_base=VISION_BACKOFF_BASE,
-            max_dim=VISION_MAX_DIM,
-            jpeg_quality=VISION_JPEG_QUALITY,
-            sleep_s=0.10,
-            status_callback=status_callback,
-            ocr_dir=ocr_dir  # Pass the correct OCR directory
-        )
-        if status_callback:
-            status_callback(f"✓ OCR tamamlandı: {ocr_ok}/{total} başarılı", "INFO")
+        ocr_ok = run_ocr(lines_manifest, ocr_dir, status_callback)
 
-    return len(pages), len(ordered_line_paths), ocr_ok
+    return len(pages), total_lines, ocr_ok

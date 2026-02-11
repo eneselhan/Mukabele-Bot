@@ -58,6 +58,10 @@ app.mount("/tahkik_data", StaticFiles(directory=BASE_DIR / "tahkik_data"), name=
 # --- DATA MODELS ---
 class CreateProjectRequest(BaseModel):
     name: str
+    authors: Optional[List[str]] = []
+    language: Optional[str] = "Ottoman Turkish"
+    subject: Optional[str] = "Islamic Studies"
+    description: Optional[str] = ""
 
 class ProcessRequest(BaseModel):
     step: str # 'images', 'ocr', 'align', 'full'
@@ -119,6 +123,18 @@ def background_task_runner(project_id: str, step: str, nusha_index: int, dpi: in
              res = engine.convert_pdf_to_images(nusha_index, dpi=dpi)
              if not res["success"]: raise RuntimeError(res.get("error"))
 
+        elif step == "segmentation":
+             GLOBAL_STATUS["message"] = "Sayfa yapısı analiz ediliyor (Segmentasyon)..."
+             GLOBAL_STATUS["progress"] = 30
+             res = engine.run_line_segmentation(nusha_index)
+             if not res["success"]: raise RuntimeError(res.get("error"))
+
+        elif step == "ocr_only":
+             GLOBAL_STATUS["message"] = "Metin tanıma (OCR) yapılıyor..."
+             GLOBAL_STATUS["progress"] = 50
+             res = engine.run_ocr(nusha_index)
+             if not res["success"]: raise RuntimeError(res.get("error"))
+
         # 4. Alignment
         if step in ["align", "full"]:
             GLOBAL_STATUS["message"] = "Metin hizalama (Alignment) yapılıyor..."
@@ -150,13 +166,20 @@ def root():
     return {"status": "Tahkik-Bot V2 API is running"}
 
 @app.get("/api/projects")
-def list_projects():
-    return project_manager.list_projects()
+def list_projects(trashed: bool = False):
+    all_projects = project_manager.list_projects()
+    return [p for p in all_projects if p.get("trashed", False) == trashed]
 
 @app.post("/api/projects")
 def create_project(req: CreateProjectRequest):
     try:
-        pid = project_manager.create_project(req.name)
+        pid = project_manager.create_project(
+            name=req.name,
+            authors=req.authors,
+            language=req.language,
+            subject=req.subject,
+            description=req.description
+        )
         return {"id": pid, "name": req.name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -172,9 +195,68 @@ def get_project(project_id: str):
 
 @app.delete("/api/projects/{project_id}")
 def delete_project(project_id: str):
+    """Permanently deletes a project from disk."""
     try:
         project_manager.delete_project(project_id)
-        return {"status": "success", "message": f"Project {project_id} deleted."}
+        return {"status": "success", "message": f"Project {project_id} permanently deleted."}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/projects/{project_id}/trash")
+def trash_project(project_id: str):
+    """Soft-delete: marks a project as trashed."""
+    try:
+        metadata = project_manager.get_metadata(project_id)
+        metadata["trashed"] = True
+        project_path = project_manager.get_project_path(project_id)
+        with open(project_path / "metadata.json", "w", encoding="utf-8") as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=2)
+        return {"status": "success", "message": "Proje çöp kutusuna taşındı."}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/projects/{project_id}/restore")
+def restore_project(project_id: str):
+    """Restores a trashed project."""
+    try:
+        metadata = project_manager.get_metadata(project_id)
+        metadata["trashed"] = False
+        project_path = project_manager.get_project_path(project_id)
+        with open(project_path / "metadata.json", "w", encoding="utf-8") as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=2)
+        return {"status": "success", "message": "Proje geri yüklendi."}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class UpdateProjectRequest(BaseModel):
+    name: Optional[str] = None
+    authors: Optional[List[str]] = None
+    language: Optional[str] = None
+    subject: Optional[str] = None
+    description: Optional[str] = None
+
+@app.put("/api/projects/{project_id}")
+def update_project(project_id: str, req: UpdateProjectRequest):
+    try:
+        metadata = project_manager.get_metadata(project_id)
+        if req.name is not None: metadata["name"] = req.name
+        if req.authors is not None: metadata["authors"] = req.authors
+        if req.language is not None: metadata["language"] = req.language
+        if req.subject is not None: metadata["subject"] = req.subject
+        if req.description is not None: metadata["description"] = req.description
+        
+        project_path = project_manager.get_project_path(project_id)
+        metadata_path = project_path / "metadata.json"
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=2)
+        
+        return {"status": "success", "metadata": metadata}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Proje bulunamadı")
     except Exception as e:
@@ -187,6 +269,17 @@ class UpdateNameRequest(BaseModel):
 def update_nusha_name(project_id: str, nusha_index: int, req: UpdateNameRequest):
     project_manager.update_nusha_name(project_id, nusha_index, req.name)
     return {"status": "success", "name": req.name}
+
+class UpdateOrderRequest(BaseModel):
+    order: List[int]
+
+@app.post("/api/projects/{project_id}/order")
+def update_project_order(project_id: str, req: UpdateOrderRequest):
+    try:
+        project_manager.update_nusha_order(project_id, req.order)
+        return {"status": "success", "order": req.order}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/projects/{project_id}/word/spellcheck")
 def run_spellcheck(project_id: str):
@@ -207,33 +300,43 @@ def delete_project_file(project_id: str, file_type: str, nusha_index: int = 1):
 @app.post("/api/projects/{project_id}/upload")
 async def upload_file(
     project_id: str, 
-    file: UploadFile = File(...), 
+    files: List[UploadFile] = File(...), 
     file_type: str = Form(...),  # 'docx' veya 'pdf'
     nusha_index: int = Form(1),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     # Dosya uzantısını kontrol et
-    if file_type == "docx" and not file.filename.endswith(".docx"):
-        raise HTTPException(status_code=400, detail="Sadece .docx yükleyebilirsiniz")
+    if file_type == "docx":
+         if len(files) > 1:
+             raise HTTPException(status_code=400, detail="Sadece tek bir Word dosyası yükleyebilirsiniz.")
+         if not files[0].filename.endswith(".docx"):
+            raise HTTPException(status_code=400, detail="Sadece .docx yükleyebilirsiniz")
     
+    saved_paths = []
     try:
-        # Robust upload: Read file content first
-        content = await file.read()
-        
-        # Note: We pass bytes content to the manager
-        file_path = project_manager.save_uploaded_file(
-            project_id=project_id, 
-            file_content=content, 
-            file_type=file_type, 
-            nusha_index=nusha_index, 
-            filename=file.filename
-        )
+        current_nusha_index = nusha_index
 
-        # Automated Workflow: Trigger spellcheck for Word docs
-        # if file_type == "docx":
-        #      background_tasks.add_task(project_manager.run_word_spellcheck, project_id)
+        for file in files:
+            # Robust upload: Read file content first
+            content = await file.read()
+            
+            # Note: We pass bytes content to the manager
+            file_path, used_index = project_manager.save_uploaded_file(
+                project_id=project_id, 
+                file_content=content, 
+                file_type=file_type, 
+                nusha_index=current_nusha_index, 
+                filename=file.filename
+            )
+            saved_paths.append(str(file_path))
 
-        return {"status": "success", "path": str(file_path)}
+            # If we are in "New Nusha" mode (index <= 0)
+            if file_type != "docx" and nusha_index <= 0:
+                 # The manager calculated a new index for us (used_index)
+                 # For the NEXT file in this batch, we want it to be used_index + 1
+                 current_nusha_index = used_index + 1
+
+        return {"status": "success", "paths": saved_paths}
     except Exception as e:
         print(f"Upload Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -311,18 +414,25 @@ def get_pipeline_status(project_id: str, nusha_index: int):
         pages_completed = pages_dir.exists() and len(list(pages_dir.glob("*.png"))) > 0
         pages_count = len(list(pages_dir.glob("*.png"))) if pages_completed else 0
         
-        # Step 2: OCR (Text Recognition)
+        # Step 2: Segmentation (Lines Manifest)
         manifest_path = nusha_dir / "lines_manifest.jsonl"
-        ocr_completed = manifest_path.exists()
-        ocr_count = 0
-        if ocr_completed:
+        segmentation_completed = manifest_path.exists()
+        segmentation_count = 0
+        if segmentation_completed:
             try:
                 with open(manifest_path, 'r', encoding='utf-8') as f:
-                    ocr_count = sum(1 for _ in f)
+                    segmentation_count = sum(1 for _ in f)
             except:
                 pass
         
-        # Step 3: Alignment
+        # Step 3: Text Recognition (Google Vision OCR Output)
+        ocr_dir = nusha_dir / "ocr"
+        text_recognition_completed = ocr_dir.exists() and len(list(ocr_dir.glob("*.json"))) > 0
+        text_recognition_count = 0
+        if text_recognition_completed:
+            text_recognition_count = len(list(ocr_dir.glob("*.json")))
+
+        # Step 4: Alignment
         alignment_path = nusha_dir / "alignment.json"
         alignment_completed = alignment_path.exists()
         
@@ -335,9 +445,10 @@ def get_pipeline_status(project_id: str, nusha_index: int):
             else:
                 return "not_started"
         
-        pages_status = get_step_status(pages_completed, True)  # Always available
-        ocr_status = get_step_status(ocr_completed, pages_completed)
-        alignment_status = get_step_status(alignment_completed, ocr_completed and has_reference)
+        pages_status = get_step_status(pages_completed, True)
+        segmentation_status = get_step_status(segmentation_completed, pages_completed)
+        text_recognition_status = get_step_status(text_recognition_completed, segmentation_completed)
+        alignment_status = get_step_status(alignment_completed, text_recognition_completed and has_reference)
         
         return {
             "steps": {
@@ -345,9 +456,13 @@ def get_pipeline_status(project_id: str, nusha_index: int):
                     "status": pages_status,
                     "count": pages_count
                 },
-                "ocr": {
-                    "status": ocr_status,
-                    "count": ocr_count
+                "segmentation": {
+                    "status": segmentation_status,
+                    "count": segmentation_count
+                },
+                "text_recognition": {
+                    "status": text_recognition_status,
+                    "count": text_recognition_count
                 },
                 "alignment": {
                     "status": alignment_status,
@@ -358,6 +473,120 @@ def get_pipeline_status(project_id: str, nusha_index: int):
         
     except Exception as e:
         print(f"Pipeline Status Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/projects/{project_id}/nusha/{nusha_index}/pipeline/outputs")
+def get_pipeline_outputs(project_id: str, nusha_index: int):
+    """
+    Returns the actual output data for each pipeline step for preview/debugging.
+    - Pages: list of image filenames
+    - Segmentation: list of line image filenames
+    - Text Recognition: list of {filename, text} from OCR .txt files
+    - Alignment: full alignment.json parsed as debug payload
+    """
+    import re
+    try:
+        nusha_dir = project_manager.get_nusha_dir(project_id, nusha_index)
+        result = {}
+
+        # 1. Pages — PNG image filenames (sorted naturally)
+        pages_dir = nusha_dir / "pages"
+        if pages_dir.exists():
+            page_files = sorted([f.name for f in pages_dir.glob("*.png")])
+            result["pages"] = page_files
+        else:
+            result["pages"] = []
+
+        # 2. Segmentation — Line image filenames (sorted naturally)
+        lines_dir = nusha_dir / "lines"
+        if lines_dir.exists():
+            line_files = sorted([f.name for f in lines_dir.glob("*.png")])
+            result["lines"] = line_files
+        else:
+            result["lines"] = []
+
+        # 3. Text Recognition — Read OCR .txt files (sorted naturally)
+        ocr_dir = nusha_dir / "ocr"
+        if ocr_dir.exists():
+            ocr_texts = []
+            txt_files = sorted(ocr_dir.glob("*.txt"), key=lambda f: f.name)
+            for tf in txt_files:
+                try:
+                    text = tf.read_text(encoding="utf-8").strip()
+                    ocr_texts.append({"filename": tf.name, "text": text})
+                except Exception:
+                    ocr_texts.append({"filename": tf.name, "text": "[okuma hatası]"})
+            result["ocr_texts"] = ocr_texts
+        else:
+            result["ocr_texts"] = []
+
+        # 4. Alignment — Full debug payload
+        alignment_path = nusha_dir / "alignment.json"
+        if alignment_path.exists():
+            try:
+                with open(alignment_path, "r", encoding="utf-8") as f:
+                    alignment_data = json.load(f)
+
+                # Extract debug-friendly summary
+                aligned_lines = alignment_data.get("aligned", [])
+                debug_info = {
+                    "algo_version": alignment_data.get("algo_version", "unknown"),
+                    "docx_path": alignment_data.get("docx_path", ""),
+                    "tahkik_word_count": alignment_data.get("tahkik_word_count", 0),
+                    "lines_count": alignment_data.get("lines_count", 0),
+                    "has_alt": alignment_data.get("has_alt", False),
+                    "has_alt3": alignment_data.get("has_alt3", False),
+                    "has_alt4": alignment_data.get("has_alt4", False),
+                    "lines_count_alt": alignment_data.get("lines_count_alt", 0),
+                    "lines_count_alt3": alignment_data.get("lines_count_alt3", 0),
+                    "lines_count_alt4": alignment_data.get("lines_count_alt4", 0),
+                    "spellcheck_errors_count": len(alignment_data.get("spellcheck", [])),
+                }
+
+                # Per-line debug data: scores, bounds, text snippets
+                line_details = []
+                for item in aligned_lines:
+                    best = item.get("best", {})
+                    line_details.append({
+                        "line_no": item.get("line_no"),
+                        "ocr_text": item.get("ocr_text", ""),
+                        "ref_text": best.get("raw", ""),
+                        "score": best.get("score", 0),
+                        "start_word": best.get("start_word", 0),
+                        "end_word": best.get("end_word", 0),
+                        "ocr_wc": item.get("ocr_wc", 0),
+                        "seg_wc": item.get("seg_wc", 0),
+                        "is_empty_ocr": item.get("is_empty_ocr", False),
+                        "error_count": item.get("error_count", 0),
+                        "line_image": item.get("line_image", ""),
+                    })
+
+                # Use real debug_log from alignment if present (new runs),
+                # otherwise fall back to basic static info (old runs)
+                debug_log = alignment_data.get("debug_log", None)
+                if not debug_log:
+                    # Fallback for alignment.json files generated before instrumentation
+                    avg_score = sum(l['score'] for l in line_details) / max(len(line_details), 1) if line_details else 0
+                    debug_log = [
+                        {"name": "read_docx_text", "description": "Word dosyasından metin okuma", "output": f"{debug_info['tahkik_word_count']} kelime okundu", "data": {}},
+                        {"name": "load_ocr_lines_ordered", "description": "OCR satırlarını yükleme", "output": f"{debug_info['lines_count']} satır yüklendi", "data": {}},
+                        {"name": "score_segment", "description": "Hizalama skoru hesaplama", "output": f"Ortalama skor: {avg_score:.3f}", "data": {}},
+                    ]
+
+                result["alignment"] = {
+                    "debug": debug_info,
+                    "lines": line_details,
+                    "functions_executed": debug_log,
+                }
+            except Exception as e:
+                result["alignment"] = {"error": str(e)}
+        else:
+            result["alignment"] = None
+
+        return result
+
+    except Exception as e:
+        print(f"Pipeline Outputs Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/projects/{project_id}/nusha/{nusha_index}/pipeline/{step}")
@@ -374,15 +603,17 @@ async def execute_pipeline_step(
     if GLOBAL_STATUS["busy"]:
         raise HTTPException(status_code=400, detail="Sistem şu an meşgul.")
     
-    valid_steps = ["pages", "ocr", "alignment"]
+    valid_steps = ["pages", "segmentation", "text_recognition", "alignment", "full"]
     if step not in valid_steps:
         raise HTTPException(status_code=400, detail=f"Invalid step. Must be one of: {valid_steps}")
     
     # Map step names to backend process names
     step_map = {
         "pages": "images",
-        "ocr": "full",  # OCR runs full pipeline (images + ocr)
-        "alignment": "align"
+        "segmentation": "segmentation",
+        "text_recognition": "ocr_only",
+        "alignment": "align",
+        "full": "full"
     }
     
     backend_step = step_map[step]
@@ -418,9 +649,31 @@ def delete_pipeline_step(project_id: str, nusha_index: int, step: str):
                 shutil.rmtree(pages_dir)
                 deleted_items.append("pages")
             
-            # Cascade: Also delete OCR and Alignment
+            # Cascade: Also delete Segmentation, OCR and Alignment
             manifest_path = nusha_dir / "lines_manifest.jsonl"
             lines_dir = nusha_dir / "lines"
+            ocr_dir = nusha_dir / "ocr" # Also delete OCR output
+            
+            if manifest_path.exists():
+                manifest_path.unlink()
+                deleted_items.append("lines_manifest.jsonl")
+            if lines_dir.exists():
+                shutil.rmtree(lines_dir)
+                deleted_items.append("lines")
+            if ocr_dir.exists():
+                shutil.rmtree(ocr_dir)
+                deleted_items.append("ocr")
+            
+            alignment_path = nusha_dir / "alignment.json"
+            if alignment_path.exists():
+                alignment_path.unlink()
+                deleted_items.append("alignment.json")
+                
+        elif step == "segmentation":
+            # Delete Segmentation outputs (lines + manifest)
+            manifest_path = nusha_dir / "lines_manifest.jsonl"
+            lines_dir = nusha_dir / "lines"
+            
             if manifest_path.exists():
                 manifest_path.unlink()
                 deleted_items.append("lines_manifest.jsonl")
@@ -428,21 +681,23 @@ def delete_pipeline_step(project_id: str, nusha_index: int, step: str):
                 shutil.rmtree(lines_dir)
                 deleted_items.append("lines")
             
+            # Cascade: Also delete OCR and Alignment
+            ocr_dir = nusha_dir / "ocr"
+            if ocr_dir.exists():
+                shutil.rmtree(ocr_dir)
+                deleted_items.append("ocr")
+                
             alignment_path = nusha_dir / "alignment.json"
             if alignment_path.exists():
                 alignment_path.unlink()
                 deleted_items.append("alignment.json")
-                
-        elif step == "ocr":
+
+        elif step == "text_recognition":
             # Delete OCR outputs
-            manifest_path = nusha_dir / "lines_manifest.jsonl"
-            lines_dir = nusha_dir / "lines"
-            if manifest_path.exists():
-                manifest_path.unlink()
-                deleted_items.append("lines_manifest.jsonl")
-            if lines_dir.exists():
-                shutil.rmtree(lines_dir)
-                deleted_items.append("lines")
+            ocr_dir = nusha_dir / "ocr"
+            if ocr_dir.exists():
+                shutil.rmtree(ocr_dir)
+                deleted_items.append("ocr")
             
             # Cascade: Also delete Alignment
             alignment_path = nusha_dir / "alignment.json"

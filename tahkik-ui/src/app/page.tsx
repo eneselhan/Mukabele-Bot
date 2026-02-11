@@ -7,6 +7,7 @@ interface Project {
   id: string;
   name: string;
   created_at?: string;
+  has_alignment?: boolean;
 }
 
 export default function DashboardPage() {
@@ -41,7 +42,6 @@ export default function DashboardPage() {
       if (!res.ok) throw new Error("Proje oluşturulamadı");
 
       const newProject = await res.json();
-      // Yönlendir -> Panel Ekranına (Process)
       router.push(`/projects/${newProject.id}/process`);
     } catch (err) {
       alert("Hata: " + err);
@@ -49,8 +49,8 @@ export default function DashboardPage() {
   };
 
   const handleDeleteProject = async (id: string, e: React.MouseEvent) => {
-    e.preventDefault(); // Link tıklamasını engelle
-    if (!confirm("Bu projeyi silmek istediğinize emin misiniz? Bu işlem geri alınamaz!")) return;
+    e.preventDefault();
+    if (!confirm("Bu projeyi silmek istediğinize emin misiniz?")) return;
 
     try {
       const res = await fetch(`http://localhost:8000/api/projects/${id}`, {
@@ -60,40 +60,39 @@ export default function DashboardPage() {
       if (!res.ok) throw new Error("Proje silinemedi");
 
       setProjects((prev) => prev.filter((p) => p.id !== id));
-      alert("Proje başarıyla silindi.");
     } catch (err) {
       alert("Silme işlemi başarısız: " + err);
     }
   };
 
-  if (loading) return <div className="p-10">Yükleniyor...</div>;
+  if (loading) return <div className="p-10 text-center text-gray-500">Yükleniyor...</div>;
 
   return (
-    <main className="min-h-screen bg-gray-100 p-8">
-      <div className="max-w-5xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-800">Projelerim</h1>
+    <main className="min-h-screen bg-gray-50 p-8">
+      <div className="max-w-4xl mx-auto">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold text-gray-800">Projelerim</h1>
           <button
             onClick={handleCreateProject}
-            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition"
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition shadow-sm"
           >
             + Yeni Proje
           </button>
         </div>
 
         {projects.length === 0 ? (
-          <div className="text-center py-20 bg-white rounded shadow text-gray-500">
+          <div className="text-center py-16 bg-white rounded-lg shadow-sm border border-gray-100 text-gray-500">
             Henüz hiç proje yok. Yeni bir tane oluşturun!
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {projects.map((p) => (
-              <div key={p.id} className="bg-white p-6 rounded shadow hover:shadow-lg transition relative group">
-                <div className="flex justify-between items-start mb-2">
-                  <h2 className="text-xl font-semibold">{p.name}</h2>
+              <div key={p.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition group">
+                <div className="flex justify-between items-start mb-3">
+                  <h2 className="text-lg font-semibold text-gray-900 truncate" title={p.name}>{p.name}</h2>
                   <button
                     onClick={(e) => handleDeleteProject(p.id, e)}
-                    className="text-red-400 hover:text-red-600 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="text-gray-300 hover:text-red-500 transition-colors p-1"
                     title="Projeyi Sil"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
@@ -101,20 +100,29 @@ export default function DashboardPage() {
                     </svg>
                   </button>
                 </div>
-                <p className="text-xs text-gray-400 mb-4 break-all">ID: {p.id}</p>
-                <div className="flex gap-2">
-                  <Link
-                    href={`/projects/${p.id}/editor`}
-                    className="flex-1 block text-center bg-gray-100 text-gray-700 py-2 rounded hover:bg-gray-200"
-                  >
-                    Editör
-                  </Link>
+
+                <div className="flex gap-2 text-sm">
                   <Link
                     href={`/projects/${p.id}/process`}
-                    className="flex-1 block text-center border border-gray-300 text-gray-600 py-2 rounded hover:bg-gray-50"
+                    className="flex-1 block text-center bg-gray-100 text-gray-700 py-2 rounded hover:bg-gray-200 transition-colors"
                   >
-                    Panel
+                    Analiz
                   </Link>
+                  {p.has_alignment ? (
+                    <Link
+                      href={`/projects/${p.id}/editor`}
+                      className="flex-1 block text-center bg-slate-800 text-white py-2 rounded hover:bg-slate-700 transition-colors"
+                    >
+                      Mukabele
+                    </Link>
+                  ) : (
+                    <span
+                      title="Analiz tamamlanmadan mukabele yapılamaz"
+                      className="flex-1 block text-center bg-gray-50 text-gray-300 py-2 rounded cursor-not-allowed border border-gray-100"
+                    >
+                      Mukabele
+                    </span>
+                  )}
                 </div>
               </div>
             ))}

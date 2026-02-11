@@ -1,5 +1,7 @@
+
 import threading
 import json
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from src.config import ALIGNMENT_JSON
 from src.utils import normalize_ar
@@ -220,3 +222,177 @@ class AlignmentService:
                     _inject_line_marks(alignment_data, pp_data, aligned_override=alignment_data[key])
                     
         return alignment_data
+
+    def enrich_alignment_data(self, alignment_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Enriches alignment data for the frontend editor:
+        1. Converts token-based line_marks into character-based 'highlights'.
+        2. Resolves absolute file paths to /static/ URLs for images.
+        """
+        import re
+        from pathlib import Path
+
+        def _resolve_image_url(path_str: str) -> str:
+            if not path_str:
+                return ""
+            # Assuming paths are like .../output_lines/lines/image.png
+            # We want /static/lines/image.png or /static/nusha2/lines/image.png
+            # This is a heuristic based on standard folder structure.
+            p = Path(path_str)
+            parts = p.parts
+            
+            # Find 'lines' and capture it and everything after
+            try:
+                idx = parts.index("lines")
+                # Check if parent is a nusha folder
+                if idx > 0 and parts[idx-1].startswith("nusha"):
+                    return f"/static/{parts[idx-1]}/{'/'.join(parts[idx:])}"
+                return f"/static/{'/'.join(parts[idx:])}"
+            except ValueError:
+                # Fallback: just return the filename in lines/
+                return f"/static/lines/{p.name}"
+
+        def _compute_highlights(text: str, start_word: int, line_marks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            if not text or not line_marks:
+                return []
+            
+            # Map gidx -> error meta
+            by_idx = {m["gidx"]: m for m in line_marks if "gidx" in m}
+            if not by_idx:
+                return []
+
+            highlights = []
+            # Split by whitespace, keeping delimiters to track accurate offsets
+            # Regex group (\s+) captures separators
+            tokens = re.split(r'(\s+)', text)
+            
+            char_idx = 0
+            token_count = 0
+            
+            for part in tokens:
+                if not part:
+                    continue
+                
+                # Check if it's purely whitespace
+                if part.strip() == "":
+                    char_idx += len(part)
+                    continue
+                
+                # It's a token
+                current_gidx = start_word + token_count
+                
+                if current_gidx in by_idx:
+                    meta = by_idx[current_gidx]
+                    
+                    # Determine color/type based on sources (simplified logic from viewer.js)
+                    srcs = meta.get("sources", [])
+                    color = "red" # default
+                    if "gemini" in srcs and "openai" in srcs and "claude" in srcs:
+                         color = "green" # all agree (err-all)
+                    elif len(srcs) > 1:
+                         color = "orange" # multiple agree
+                    
+                    highlights.append({
+                        "start": char_idx,
+                        "end": char_idx + len(part),
+                        "type": "mismatch", # generic type
+                        "color": color,
+                        "metadata": {
+                            "wrong": meta.get("wrong"),
+                            "suggestion": meta.get("suggestion"),
+                            "reason": meta.get("reason"),
+                            "sources": srcs
+                        }
+                    })
+                
+                token_count += 1
+                char_idx += len(part)
+                
+            return highlights
+
+        # Process lists
+        for list_key in ["aligned", "aligned_alt", "aligned_alt3", "aligned_alt4"]:
+            if list_key not in alignment_data or not isinstance(alignment_data[list_key], list):
+                continue
+                
+            for item in alignment_data[list_key]:
+                if not isinstance(item, dict):
+                    continue
+                
+                best = item.get("best", {})
+                raw = best.get("raw", "")
+                start_word = best.get("start_word", 0)
+                line_marks = item.get("line_marks", [])
+                
+                # 1. Compute Highlights
+                item["highlights"] = _compute_highlights(raw, start_word, line_marks)
+                
+                # 2. Resolve Image URL
+                line_image = item.get("line_image", "")
+                item["image_url"] = _resolve_image_url(line_image)
+
+                # 3. Inject page_image for frontend sync
+                # We need to link this line to a page.
+                # line_image usually looks like: .../page_0001_01R_line_001.png
+                # We want: page_0001_01R.png
+                if line_image:
+                    try:
+                        p_name = Path(line_image).name
+                        # Standard Kraken/Tahkik naming: {page}_line_{idx}.png
+                        # Split by '_line_'
+                        if "_line_" in p_name:
+                             base_page = p_name.split("_line_")[0]
+                             # Assume original was .png? Or matches get_pages glob.
+                             # get_pages globs *.png.
+                             # So we reconstruct filename.
+                             item["page_image"] = base_page + ".png"
+                             item["page_name"] = base_page
+                    except Exception:
+                        pass
+        
+        return alignment_data
+
+    def update_line(self, line_no: int, new_text: str, file_path: Path) -> bool:
+        """
+        Updates the text content of a specific line in the alignment file.
+        Searches across all alignment keys (aligned, aligned_alt, etc.)
+        """
+        try:
+            if not file_path.exists():
+                return False
+
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            updated = False
+            # Check all possible keys
+            keys = ["aligned", "aligned_alt", "aligned_alt3", "aligned_alt4"]
+            
+            for key in keys:
+                if key in data and isinstance(data[key], list):
+                    for item in data[key]:
+                        # Check type and line_no
+                        if isinstance(item, dict) and item.get("line_no") == line_no:
+                            # Update the text
+                            if "best" not in item:
+                                item["best"] = {}
+                            item["best"]["raw"] = new_text
+                            # Also update legacy/flat text field if present
+                            if "text" in item:
+                                item["text"] = new_text
+                                
+                            updated = True
+                            break
+                if updated:
+                    break
+            
+            if updated:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=4)
+                return True
+                
+            return False
+
+        except Exception as e:
+            print(f"Error updating line: {e}")
+            return False

@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Callable
 from rapidfuzz.distance import Levenshtein
-from rapidfuzz import fuzz
 from src.config import ALIGNMENT_JSON, BEAM_K, CAND_TOPK, PREFIX_WORDS
 from src.document import read_docx_text, tokenize_text
 from src.ocr import load_ocr_lines_ordered
@@ -21,81 +20,7 @@ from src.scoring import score_segment
 from src.spellcheck import _normalize_error_word
 # (kept above) NUSHA2_*/NUSHA3_* imports
 
-ALGO_VERSION = "v7-global-anchor-refinement"
-
-def find_alignment_anchor(ocr_lines: List[Dict[str, Any]], tahkik_tokens: List[str]) -> int:
-    """
-    Word dosyasının başlangıcını (imzasını) OCR satırları içinde arar.
-    Hata korumalı (Safe Mode) versiyondur. Asla sistemi çökertmez.
-    """
-    try:
-        # GÜVENLİK KONTROLÜ 1: Veri var mı?
-        if not tahkik_tokens or not ocr_lines:
-            return 0
-
-        # GÜVENLİK KONTROLÜ 2: normalize_ar fonksiyonu erişilebilir mi?
-        # Erişilemezse yerel bir lambda kullan (Yedek lastik)
-        try:
-            # Global scope'ta normalize_ar var mı diye basit bir test yapıyoruz
-            test_norm = normalize_ar("test")
-            local_normalize = normalize_ar
-        except (NameError, Exception):
-            print("UYARI: normalize_ar bulunamadı, basit normalizasyon kullanılıyor.")
-            local_normalize = lambda x: x.strip()
-
-        # 1. İMZA OLUŞTURMA
-        # İlk 40 kelimeyi al
-        signature_tokens = [local_normalize(t) for t in tahkik_tokens[:40] if t and len(t) > 1]
-        signature_str = "".join(signature_tokens)
-
-        if len(signature_str) < 10: 
-            return 0
-
-        best_ratio = 0.0
-        best_line_idx = 0
-        
-        # 2. ARAMA PENCERESİ (İlk 300 satır)
-        scan_limit = min(len(ocr_lines), 300)
-        
-        for i in range(scan_limit):
-            # Pencere: i. satırdan sonraki 8 satırın metnini birleştir
-            window_tokens = []
-            for k in range(i, min(i + 8, len(ocr_lines))):
-                txt = ocr_lines[k].get("ocr_text", "") or ""
-                # OCR gürültüsünü (tek harflik D, G, ., -) temizle
-                clean_tokens = [local_normalize(w) for w in txt.split() if len(w) > 1]
-                window_tokens.extend(clean_tokens)
-                
-            window_str = "".join(window_tokens)
-            
-            # Karşılaştırma: İmzamız, bu pencerenin içinde "kabaca" var mı?
-            check_len = int(len(signature_str) * 1.5)
-            compare_part = window_str[:check_len]
-            
-            if not compare_part: continue
-
-            ratio = 0.0
-            try:
-                ratio = Levenshtein.normalized_similarity(signature_str, compare_part)
-            except Exception:
-                pass
-            
-            # Skoru Kaydet
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best_line_idx = i
-
-        print(f"DEBUG: Anchor Search (Safe) -> Best Score: {best_ratio:.2f} at Line {best_line_idx}")
-
-        # 3. KARAR MEKANİZMASI
-        if best_ratio > 0.35:
-            return best_line_idx
-        else:
-            return 0
-
-    except Exception as e:
-        print(f"HATA: find_alignment_anchor çöktü: {e}. Varsayılan 0 dönülüyor.")
-        return 0
+ALGO_VERSION = "v6-global-anchor-refinement"
 
 def align_ocr_to_tahkik_segment_dp(
     docx_path: Path,
@@ -125,19 +50,11 @@ def align_ocr_to_tahkik_segment_dp(
     if not ocr_lines:
         raise RuntimeError("OCR satırları bulunamadı.")
 
-    # 1. BAŞLANGIÇ NOKTASINI BUL
-    start_line_idx = find_alignment_anchor(ocr_lines, tahkik_tokens)
-    if status_callback and start_line_idx > 0:
-        status_callback(f"Giriş kısmı atlanıyor: İlk {start_line_idx} satır hizalamaya dahil edilmeyecek.", "INFO")
-
-    # 2. LİSTELERİ AYIR
-    ignored_ocr_lines = ocr_lines[:start_line_idx]   # Giriş kısmı (Önsöz vb.)
-    active_ocr_lines = ocr_lines[start_line_idx:]    # Asıl Metin
     M = len(tahkik_tokens)
-    N = len(active_ocr_lines) # ARTIK SADECE AKTİF SATIRLARI SAYIYORUZ
+    N = len(ocr_lines)
 
-    # 3. Normalizasyon ve Flattening (Düzleştirme)
-    # Global hizalama için aktif OCR satırlarını tek bir kelime listesi yapıyoruz.
+    # 2. Normalizasyon ve Flattening (Düzleştirme)
+    # Global hizalama için tüm OCR satırlarını tek bir kelime listesi yapıyoruz.
     # Aynı zamanda hangi kelimenin hangi satırdan geldiğini saklıyoruz.
     
     tahkik_norms = [normalize_ar(t) for t in tahkik_tokens]
@@ -147,7 +64,7 @@ def align_ocr_to_tahkik_segment_dp(
     line_boundaries = [] # line_idx -> (flat_start, flat_end)
     
     current_flat_idx = 0
-    for line_idx, item in enumerate(active_ocr_lines):
+    for line_idx, item in enumerate(ocr_lines):
         txt = item.get("ocr_text") or ""
         # Kelime kelime böl
         words = txt.split()
@@ -210,47 +127,18 @@ def align_ocr_to_tahkik_segment_dp(
         # Basit oran orantı fallback (bunu kodlamak uzun sürer, genelde hata vermez)
         raise e
 
-    # 5. Milestone Extraction (Anchor Points) & FUZZY MATCHING FIX
+    # 5. Milestone Extraction (Anchor Points)
+    # Hangi OCR flat index'i hangi Tahkik index'ine kesin (equal) denk geliyor?
     ocr_to_tahkik_matches = {} # flat_ocr_idx -> tahkik_idx
-    
-    # Char -> Word ters dönüşümü (Fuzzy kontrol için)
-    char2word_list = unique_words # İndeks erişimi için
     
     for tag, i1, i2, j1, j2 in opcodes:
         if tag == 'equal':
-            # KESİN EŞLEŞME: Zaten mükemmel, direkt ekle
+            # Aralık eşleşmesi
             count = i2 - i1
             for k in range(count):
+                # NULL_CHAR eşleşmelerini güvenilir sayma (görültü olabilir)
                 if ocr_str[i1 + k] != NULL_CHAR:
                     ocr_to_tahkik_matches[i1 + k] = j1 + k
-        
-        elif tag == 'replace':
-            # YAKLAŞIK EŞLEŞME (Fuzzy Logic): 
-            # Kelimeler farklı ama çok benziyorsa, yine de çapa (anchor) olarak kullan.
-            # Bu, "Fermuar Kaymasını" (Zipper Slip) engeller.
-            
-            ocr_len = i2 - i1
-            tahkik_len = j2 - j1
-            
-            # Sadece birebir (1-1) değişimlerde kontrol et
-            if ocr_len == tahkik_len:
-                for k in range(ocr_len):
-                    c_ocr = ocr_str[i1 + k]
-                    c_tahkik = tahkik_str[j1 + k]
-                    
-                    if c_ocr == NULL_CHAR or c_tahkik == NULL_CHAR:
-                        continue
-                        
-                    # Karakterden kelimeye dön
-                    w_ocr = char2word_list[ord(c_ocr) - 0xE000]
-                    w_tahkik = char2word_list[ord(c_tahkik) - 0xE000]
-                    
-                    # Benzerlik oranı (0.0 - 100.0)
-                    ratio = Levenshtein.normalized_similarity(w_ocr, w_tahkik)
-                    
-                    # EŞİK DEĞERİ: %65 benzerlik yeterli (Örn: "Kalem" - "Kelem")
-                    if ratio > 0.65:
-                        ocr_to_tahkik_matches[i1 + k] = j1 + k
 
     # 6. Satır Sınırlarını Belirleme (Refinement & Interpolation)
     line_segments = [] # (start_idx, end_idx) for each line
@@ -397,7 +285,7 @@ def align_ocr_to_tahkik_segment_dp(
         end = max(start, min(end, M))
         
         seg_raw = " ".join(tahkik_tokens[start:end]) if start < end else ""
-        item = active_ocr_lines[i]
+        item = ocr_lines[i]
         ocr_txt = item.get("ocr_text") or ""
         
         # Skorlama
@@ -441,34 +329,6 @@ def align_ocr_to_tahkik_segment_dp(
             "ocr_wc": len(ocr_txt.split()),
             "seg_wc": len(seg_raw.split())
         })
-
-    # --- ADIM 3: EKSİK PARÇALARI BİRLEŞTİRME ---
-    final_aligned_results = []
-    
-    # 1. Atlanan Giriş Satırları (Ignored)
-    # Bunları boş ama "bilgi verici" şekilde ekliyoruz
-    for item in ignored_ocr_lines:
-        final_aligned_results.append({
-            "line_no": item.get("line_no"),
-            "line_image": item.get("line_image", ""),
-            "ocr_text": item.get("ocr_text", ""),
-            "best": {
-                "raw": "--- [GİRİŞ KISMI / HİZALAMA DIŞI] ---",
-                "score": 0
-            },
-            "is_empty_ocr": False,
-            "candidates": [],
-            "error_hits": [],
-            "error_count": 0,
-            "ocr_wc": 0,
-            "seg_wc": 0
-        })
-
-    # 2. Hizalanmış Satırlar (Active)
-    final_aligned_results.extend(aligned_results)
-
-    # Ana değişkeni güncelle ki payload doğru gitsin
-    aligned_results = final_aligned_results
 
     # 8. Payload Hazırla ve Kaydet
     payload = {
@@ -674,13 +534,18 @@ def align_ocr_to_tahkik_segment_dp_multi(
     if alt_ocr_lines:
         if status_callback:
             status_callback("ALIGNMENT: Nüsha 2 hizalaması hazırlanıyor...", "INFO")
-        alt_payload = align_ocr_to_tahkik_segment_dp(
-            docx_path,
-            spellcheck_payload=spellcheck_payload,
-            status_callback=status_callback,
-            ocr_lines_override=alt_ocr_lines,
-            write_json=False,
-        )
+        try:
+            alt_payload = align_ocr_to_tahkik_segment_dp(
+                docx_path,
+                spellcheck_payload=spellcheck_payload,
+                status_callback=status_callback,
+                ocr_lines_override=alt_ocr_lines,
+                write_json=False,
+            )
+        except Exception as e:
+            if status_callback:
+                status_callback(f"HATA (ALIGNMENT N2): {e}", "ERROR")
+            alt_payload = {}
         # Do NOT overwrite main alignment.json with alt-only payload; merge into combined payload.
         payload["has_alt"] = True
         payload["aligned_alt"] = alt_payload.get("aligned", []) if isinstance(alt_payload, dict) else []
@@ -730,13 +595,18 @@ def align_ocr_to_tahkik_segment_dp_multi(
     if alt3_ocr_lines:
         if status_callback:
             status_callback("ALIGNMENT: Nüsha 3 hizalaması hazırlanıyor...", "INFO")
-        alt3_payload = align_ocr_to_tahkik_segment_dp(
-            docx_path,
-            spellcheck_payload=spellcheck_payload,
-            status_callback=status_callback,
-            ocr_lines_override=alt3_ocr_lines,
-            write_json=False,
-        )
+        try:
+            alt3_payload = align_ocr_to_tahkik_segment_dp(
+                docx_path,
+                spellcheck_payload=spellcheck_payload,
+                status_callback=status_callback,
+                ocr_lines_override=alt3_ocr_lines,
+                write_json=False,
+            )
+        except Exception as e:
+            if status_callback:
+                status_callback(f"HATA (ALIGNMENT N3): {e}", "ERROR")
+            alt3_payload = {}
         payload["has_alt3"] = True
         payload["aligned_alt3"] = alt3_payload.get("aligned", []) if isinstance(alt3_payload, dict) else []
         payload["lines_count_alt3"] = alt3_payload.get("lines_count", 0) if isinstance(alt3_payload, dict) else 0
@@ -791,13 +661,18 @@ def align_ocr_to_tahkik_segment_dp_multi(
     if alt4_ocr_lines:
         if status_callback:
             status_callback("ALIGNMENT: Nüsha 4 hizalaması hazırlanıyor...", "INFO")
-        alt4_payload = align_ocr_to_tahkik_segment_dp(
-            docx_path,
-            spellcheck_payload=spellcheck_payload,
-            status_callback=status_callback,
-            ocr_lines_override=alt4_ocr_lines,
-            write_json=False,
-        )
+        try:
+            alt4_payload = align_ocr_to_tahkik_segment_dp(
+                docx_path,
+                spellcheck_payload=spellcheck_payload,
+                status_callback=status_callback,
+                ocr_lines_override=alt4_ocr_lines,
+                write_json=False,
+            )
+        except Exception as e:
+            if status_callback:
+                status_callback(f"HATA (ALIGNMENT N4): {e}", "ERROR")
+            alt4_payload = {}
         payload["has_alt4"] = True
         payload["aligned_alt4"] = alt4_payload.get("aligned", []) if isinstance(alt4_payload, dict) else []
         payload["lines_count_alt4"] = alt4_payload.get("lines_count", 0) if isinstance(alt4_payload, dict) else 0

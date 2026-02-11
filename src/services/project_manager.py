@@ -80,6 +80,9 @@ class ProjectManager:
                     try:
                         with open(metadata_path, "r", encoding="utf-8") as f:
                             metadata = json.load(f)
+                            # FAST CHECK: Does alignment.json exist?
+                            alignment_path = item / "alignment.json"
+                            metadata["has_alignment"] = alignment_path.exists()
                             projects.append(metadata)
                     except (json.JSONDecodeError, OSError):
                         # Skip malformed projects
@@ -202,9 +205,10 @@ class ProjectManager:
             "nushas": nushas_status
         }
 
-    def save_uploaded_file(self, project_id: str, file_obj, file_type: str, nusha_index: int, filename: str = None) -> Path:
+    def save_uploaded_file(self, project_id: str, file_content: bytes, file_type: str, nusha_index: int, filename: str = None) -> Path:
         """
         Saves an uploaded file to the correct location based on its type.
+        Accepts file_content as bytes for robust handling.
         """
         project_path = self.projects_dir / project_id
         # Ensure project path exists
@@ -219,7 +223,7 @@ class ProjectManager:
             
             # Dosyayı Yaz
             with open(target_path, "wb") as buffer:
-                shutil.copyfileobj(file_obj, buffer)
+                buffer.write(file_content)
         
         else:
             # PDF Dosyası -> Nüsha Klasörüne Orijinal İsmiyle
@@ -233,8 +237,8 @@ class ProjectManager:
                 except Exception:
                     pass
 
-            # Orijinal ismi al (Argüman varsa kullan, yoksa file_obj'den dene, yoksa default)
-            original_name = filename or getattr(file_obj, "filename", "the_manuscript.pdf")
+            # Orijinal ismi al
+            original_name = filename or "the_manuscript.pdf"
             
             # Güvenli karakter kontrolü (Basit)
             safe_name = "".join(c for c in original_name if c.isalnum() or c in "._- ")
@@ -246,13 +250,12 @@ class ProjectManager:
             # Dosyayı Yaz
             try:
                 with open(target_path, "wb") as buffer:
-                    shutil.copyfileobj(file_obj, buffer)
+                    buffer.write(file_content)
             except OSError:
                 print(f"[WARN] Dosya ismi geçersiz ({safe_name}), generic isim kullanılıyor.")
                 target_path = nusha_dir / "the_manuscript.pdf"
                 with open(target_path, "wb") as buffer:
-                     # Eğer open hata verdiyse file_obj okunmamıştır, tekrar dene
-                    shutil.copyfileobj(file_obj, buffer)
+                    buffer.write(file_content)
 
             # Metadata'ya dosya ismini kaydet
             self.update_nusha_config(project_id, nusha_index, {"filename": target_path.name})

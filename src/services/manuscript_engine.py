@@ -577,22 +577,53 @@ class ManuscriptEngine:
                  return {"success": False, "error": str(e)}
 
     def generate_mukabele_json(self, project_id: str, nusha_index: int):
-        """OCR çıktılarını Mukabele formatına dönüştürüp kaydeder."""
+        """OCR çıktılarını Mukabele formatına dönüştürüp kaydeder. alignment.json varsa onu baz alır."""
         try:
             print(f"[ENGINE] Mukabele JSON oluşturuluyor... (Proje: {project_id}, Nüsha: {nusha_index})")
             # Correct path reference
             project_path = self.project_dir
             nusha_dir = project_path / f"nusha_{nusha_index}"
             lines_dir = nusha_dir / "lines" # OCR satır resimlerinin olduğu yer
+            alignment_path = nusha_dir / "alignment.json"
             
-            # Word dosyasını oku (Şimdilik basit okuma)
-            # İleride paragraflara böleceğiz, şimdilik satır satır eşleştirelim
             segments = []
             
-            # Eğer lines klasörü varsa resimleri listele
-            if lines_dir.exists():
+            # 1. Alignment verisi varsa onu kullanalım (ÖNCELİKLİ)
+            if alignment_path.exists():
+                 try:
+                     with open(alignment_path, "r", encoding="utf-8") as f:
+                         align_data = json.load(f)
+                     
+                     aligned_list = align_data.get("aligned", [])
+                     
+                     for item in aligned_list:
+                         line_no = item.get("line_no")
+                         ocr_text = item.get("ocr_text", "")
+                         line_image = item.get("line_image", "")
+                         best = item.get("best", {})
+                         ref_text = best.get("raw", "") # Word'den gelen gerçek metin
+                         
+                         relative_path = f"/media/projects/{project_id}/nusha_{nusha_index}/lines/{Path(line_image).name}"
+                         
+                         segments.append({
+                             "id": line_no,
+                             "ref_text": ref_text if ref_text else "", # Hizalanmış metin
+                             "nushas": {
+                                 str(nusha_index): {
+                                     "text": ocr_text,
+                                     "img_url": relative_path,
+                                     "score": int(best.get("score", 0))
+                                 }
+                             }
+                         })
+                     print(f"[ENGINE] alignment.json kullanılarak {len(segments)} segment oluşturuldu.")
+                     
+                 except Exception as e:
+                     print(f"[WARN] alignment.json okunamadı, fallback yapılıyor: {e}")
+            
+            # 2. Alignment yoksa veya boşsa, resimlerden fallback oluştur
+            if not segments and lines_dir.exists():
                 # Resimleri isme göre sırala (line_1.jpg, line_2.jpg vs)
-                # Doğru sıralama için lambda kullanabiliriz ama şimdilik glob default
                 import re
                 def natural_sort_key(s):
                     return [int(text) if text.isdigit() else text.lower()
@@ -601,20 +632,16 @@ class ManuscriptEngine:
                 line_images = sorted(list(lines_dir.glob("*.jpg")) + list(lines_dir.glob("*.png")), key=natural_sort_key)
                 
                 for i, img_path in enumerate(line_images):
-                    # Resim URL'ini oluştur (/media/projects/ID/nusha_index/lines/img.jpg)
-                    # Dikkat: Static mount /media -> tahkik_data'ya bakıyor.
-                    # Project path: tahkik_data/projects/ID
-                    # Yani URL: /media/projects/ID/...
                     relative_path = f"/media/projects/{project_id}/nusha_{nusha_index}/lines/{img_path.name}"
                     
                     segments.append({
                         "id": i + 1,
-                        "ref_text": f"Referans Metin Satır {i+1} (Word İçeriği Gelecek)", # Placeholder
+                        "ref_text": f"Hizalama Yapılmamış Satır {i+1}", # Daha açıklayıcı
                         "nushas": {
                             str(nusha_index): {
-                                "text": f"OCR Çıktısı: {img_path.name}", # İleride Google Vision text'i gelecek
+                                "text": f"OCR Çıktısı: {img_path.name}", 
                                 "img_url": relative_path,
-                                "score": 100
+                                "score": 0
                             }
                         }
                     })
@@ -622,22 +649,30 @@ class ManuscriptEngine:
             # JSON Olarak Kaydet
             output_path = project_path / "mukabele.json"
             
-            # Mevcut varsa birleştir (Merge logic - advanced feature, şimdilik overwrite veya append)
-            # Şu anlık sadece tek nusha destekli gibi yazıyoruz ama yapıyı bozmamak lazım.
-            # Eğer dosya varsa oku, ilgili nushayı güncelle.
-            existing_data = {"segments": []}
+            # Mevcut varsa birleştir (Basit merge logic)
             if output_path.exists():
                 try:
                     with open(output_path, "r", encoding="utf-8") as f:
-                        existing_data = json.load(f)
-                except:
+                        existing = json.load(f)
+                        existing_segments = {s["id"]: s for s in existing.get("segments", [])}
+                        
+                        # Yeni segmentleri merge et
+                        for seg in segments:
+                            sid = seg["id"]
+                            if sid in existing_segments:
+                                # Nüsha verisini ekle/güncelle
+                                existing_segments[sid]["nushas"].update(seg["nushas"])
+                                # Ref text güncelle (alignment varsa)
+                                if seg["ref_text"] and "Hizalama Yapılmamış" not in seg["ref_text"]:
+                                     existing_segments[sid]["ref_text"] = seg["ref_text"]
+                            else:
+                                existing_segments[sid] = seg
+                        
+                        segments = list(existing_segments.values())
+                        segments.sort(key=lambda x: x["id"])
+                except Exception:
                     pass
-            
-            # Basit merge: Eğer segment ID varsa nushayı ekle, yoksa yeni segment oluştur
-            # Bu karmaşık olabilir, şimdilik basitçe overwrite edelim veya append edelim.
-            # Kullanıcının isteği "sonuçları kaydetmek". 
-            # Şimdilik direkt listeyi yazalım, çoklu nusha merge sonraki iş.
-            import json
+
             with open(output_path, "w", encoding="utf-8") as f:
                 json.dump({"segments": segments}, f, ensure_ascii=False, indent=2)
                 

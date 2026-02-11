@@ -223,7 +223,7 @@ class AlignmentService:
                     
         return alignment_data
 
-    def enrich_alignment_data(self, alignment_data: Dict[str, Any]) -> Dict[str, Any]:
+    def enrich_alignment_data(self, alignment_data: Dict[str, Any], project_id: str = "") -> Dict[str, Any]:
         """
         Enriches alignment data for the frontend editor:
         1. Converts token-based line_marks into character-based 'highlights'.
@@ -236,8 +236,7 @@ class AlignmentService:
             if not path_str:
                 return ""
             # Assuming paths are like .../output_lines/lines/image.png
-            # We want /static/lines/image.png or /static/nusha2/lines/image.png
-            # This is a heuristic based on standard folder structure.
+            # We want /media/{project_id}/nusha_X/lines/image.png
             p = Path(path_str)
             parts = p.parts
             
@@ -246,10 +245,18 @@ class AlignmentService:
                 idx = parts.index("lines")
                 # Check if parent is a nusha folder
                 if idx > 0 and parts[idx-1].startswith("nusha"):
+                    # If project_id is provided, construct full media URL
+                    if project_id:
+                         return f"http://localhost:8000/media/{project_id}/{parts[idx-1]}/{'/'.join(parts[idx:])}"
                     return f"/static/{parts[idx-1]}/{'/'.join(parts[idx:])}"
-                return f"/static/{'/'.join(parts[idx:])}"
+                
+                if project_id:
+                     return f"http://localhost:8000/media/{project_id}/lines/{p.name}"
+                return f"/static/lines/{p.name}"
             except ValueError:
                 # Fallback: just return the filename in lines/
+                if project_id:
+                     return f"http://localhost:8000/media/{project_id}/lines/{p.name}"
                 return f"/static/lines/{p.name}"
 
         def _compute_highlights(text: str, start_word: int, line_marks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -264,7 +271,10 @@ class AlignmentService:
             highlights = []
             # Split by whitespace, keeping delimiters to track accurate offsets
             # Regex group (\s+) captures separators
-            tokens = re.split(r'(\s+)', text)
+            # Split by whitespace AND punctuation to match normalize_ar logic
+            # normalize_ar removes non-alphanumeric. We separate them so they don't merge with words.
+            # Regex: Capture delimiters (whitespace OR non-word/non-arabic chars)
+            tokens = re.split(r'(\s+|[^\u0600-\u06FF0-9A-Za-z]+)', text)
             
             char_idx = 0
             token_count = 0
@@ -273,8 +283,9 @@ class AlignmentService:
                 if not part:
                     continue
                 
-                # Check if it's purely whitespace
-                if part.strip() == "":
+                # Check if it's purely whitespace or punctuation (non-word)
+                # We use normalize_ar to check if it contains any "word" characters
+                if not normalize_ar(part):
                     char_idx += len(part)
                     continue
                 

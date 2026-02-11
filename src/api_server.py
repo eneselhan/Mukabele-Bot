@@ -470,6 +470,64 @@ def delete_pipeline_step(project_id: str, nusha_index: int, step: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _backfill_from_manifest(lines_list: List[Dict], manifest_path: Path):
+    """
+    Backfills missing bbox, page_image, and page_name from lines_manifest.jsonl.
+    Matches primarily by line_image filename.
+    """
+    if not lines_list or not manifest_path.exists():
+        return lines_list
+        
+    # Build Manifest Lookup: filename -> record
+    manifest_map = {}
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            for line in f:
+                rec = json.loads(line)
+                # Key by just the filename of the line image
+                line_img_path = rec.get("line_image", "")
+                if line_img_path:
+                    fname = Path(line_img_path).name
+                    manifest_map[fname] = rec
+    except Exception as e:
+        print(f"[API] Manifest read error: {e}")
+        return lines_list
+
+    # Backfill
+    for item in lines_list:
+        # Get existing image path from alignment
+        line_img = item.get("line_image", "")
+        if not line_img: continue
+        
+        fname = Path(line_img).name
+        if fname in manifest_map:
+            rec = manifest_map[fname]
+            
+            # 1. Backfill BBox if missing
+            if "bbox" not in item:
+                item["bbox"] = rec.get("bbox")
+                
+            # 2. Backfill Page Image (Critical for page mapping)
+            # The manifest has full path, we might want just filename or relative
+            # Frontend PageCanvas expects just filename in some places.
+            if "page_image" not in item:
+                p_img = rec.get("page_image", "")
+                if p_img:
+                    item["page_image"] = Path(p_img).name # Use filename for safer matching
+                    
+            # 3. Page Name (Optional)
+            if "page_name" not in item:
+                # Infer from page_image filename
+                p_img = item.get("page_image", "")
+                if p_img:
+                    # extract number p001 -> Sayfa 1
+                    import re
+                    m = re.search(r'p(\d+)', p_img)
+                    if m:
+                         item["page_name"] = f"Sayfa {int(m.group(1))}"
+    
+    return lines_list
+
 @app.get("/api/projects/{project_id}/mukabele-data")
 def get_mukabele_data(project_id: str):
     try:
@@ -510,6 +568,26 @@ def get_mukabele_data(project_id: str):
         final_data["aligned_alt"] = load_nusha(2)
         final_data["aligned_alt3"] = load_nusha(3)
         final_data["aligned_alt4"] = load_nusha(4)
+        
+        # --- FIX 1: Backfill BBox & Page Data from Manifest ---
+        # Only needed if direct alignment JSON is missing this info (it usually is)
+        
+        # Nusha 1
+        n1_manifest = project_manager.get_nusha_dir(project_id, 1) / "lines_manifest.jsonl"
+        _backfill_from_manifest(final_data["aligned"], n1_manifest)
+        
+        # Nusha 2
+        n2_manifest = project_manager.get_nusha_dir(project_id, 2) / "lines_manifest.jsonl"
+        _backfill_from_manifest(final_data["aligned_alt"], n2_manifest)
+        
+        # Nusha 3
+        n3_manifest = project_manager.get_nusha_dir(project_id, 3) / "lines_manifest.jsonl"
+        _backfill_from_manifest(final_data["aligned_alt3"], n3_manifest)
+        
+        # Nusha 4
+        n4_manifest = project_manager.get_nusha_dir(project_id, 4) / "lines_manifest.jsonl"
+        _backfill_from_manifest(final_data["aligned_alt4"], n4_manifest)
+
         
         # FILTER OUT PREFACE LINES (GİRİŞ KISMI) FROM ALL ALIGNED DATA
         # These are lines marked as outside alignment scope
@@ -570,7 +648,7 @@ def get_mukabele_data(project_id: str):
                      final_data["spellcheck_per_paragraph"] = d["spellcheck_per_paragraph"]
 
         final_data = alignment_service.process_highlighting(final_data)
-        final_data = alignment_service.enrich_alignment_data(final_data)
+        final_data = alignment_service.enrich_alignment_data(final_data, project_id=project_id)
         
         return final_data
 

@@ -17,6 +17,7 @@ export interface LineData {
     bbox?: number[]; // [x0, y0, x1, y1]
     line_marks?: any[]; // Spellcheck errors
     ocr_text?: string; // Aligned OCR text
+    image_url?: string; // OCR line image URL
     // ... add other fields as needed
 }
 

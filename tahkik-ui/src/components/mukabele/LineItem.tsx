@@ -132,6 +132,18 @@ export default function LineItem({ line, isActive, onSelect, fontSize }: LineIte
                 </div>
             )}
 
+            {/* OCR Line Image */}
+            {line.image_url && (
+                <div className="mt-2 pt-2 border-t border-slate-100 flex flex-col items-center">
+                    <span className="text-[10px] text-slate-400 font-bold mb-1 w-full text-left">🖼️ Satır Görseli</span>
+                    <img
+                        src={line.image_url}
+                        alt={`OCR Line ${line.line_no}`}
+                        className="max-h-16 border border-slate-200 rounded object-contain bg-white"
+                    />
+                </div>
+            )}
+
             {/* AI Suggestions / Metadata Display */}
             {line.line_marks && line.line_marks.length > 0 && (
                 <div className="mt-2 text-sm text-slate-500 border-t pt-2 bg-slate-50 rounded p-2">

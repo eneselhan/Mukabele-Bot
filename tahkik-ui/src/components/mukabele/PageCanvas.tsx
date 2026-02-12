@@ -36,7 +36,7 @@ export default function PageCanvas() {
         const filename = rawPath.split("/").pop();
         if (!filename) return null;
         const nushaFolder = `nusha_${nushaIndex}`;
-        return `http://localhost:8000/media/${projectId}/${nushaFolder}/pages/${filename}`;
+        return `http://127.0.0.1:8000/media/${projectId}/${nushaFolder}/pages/${filename}`;
     }, [currentPage, projectId, nushaIndex, activePageKey]);
 
     const handleImgLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -208,7 +208,7 @@ export default function PageCanvas() {
                     const rawPath = page.page_image?.replace(/\\/g, "/");
                     const fname = rawPath?.split("/").pop();
                     const thumbUrl = fname
-                        ? `http://localhost:8000/media/${projectId}/nusha_${nushaIndex}/pages/${fname}`
+                        ? `http://127.0.0.1:8000/media/${projectId}/nusha_${nushaIndex}/pages/${fname}`
                         : null;
 
                     // Extract short label

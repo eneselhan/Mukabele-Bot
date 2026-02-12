@@ -23,7 +23,7 @@ interface Project {
 
 type SortMode = "manual" | "name-asc" | "name-desc" | "date-new" | "date-old";
 
-const API = "http://localhost:8000";
+const API = "http://127.0.0.1:8000";
 
 export default function ProjectsPage() {
     const [projects, setProjects] = useState<Project[]>([]);

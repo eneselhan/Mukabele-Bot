@@ -23,7 +23,7 @@ export default function ProjectSetup() {
     useEffect(() => {
         // Proje verisini çek
         if (!projectId) return;
-        fetch(`http://localhost:8000/api/projects/${projectId}`)
+        fetch(`http://127.0.0.1:8000/api/projects/${projectId}`)
             .then(res => res.json())
             .then(data => {
                 setProject(data);
@@ -48,7 +48,7 @@ export default function ProjectSetup() {
         formData.append("dpi", dpi.toString());
 
         try {
-            const res = await fetch(`http://localhost:8000/api/projects/${projectId}/upload`, {
+            const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/upload`, {
                 method: "POST",
                 body: formData
             });

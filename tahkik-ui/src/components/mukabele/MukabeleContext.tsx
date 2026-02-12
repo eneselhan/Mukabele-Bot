@@ -65,6 +65,8 @@ interface MukabeleContextType {
     setSplitRatio: (ratio: number) => void; // 0.2 to 0.8
     fontSize: number;
     setFontSize: (size: number) => void; // px
+    viewMode: 'list' | 'paper';
+    setViewMode: (mode: 'list' | 'paper') => void;
 
     // Nusha State
     nushaIndex: number;
@@ -100,6 +102,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
     const [zoom, setZoomState] = useState(1.32);
     const [splitRatio, setSplitRatioState] = useState(0.52);
     const [fontSize, setFontSizeState] = useState(23);
+    const [viewMode, setViewModeState] = useState<'list' | 'paper'>('list');
     const [nushaIndex, setNushaIndexState] = useState(1);
 
     // Search
@@ -121,6 +124,9 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
 
             const savedFont = localStorage.getItem("mukabele_font");
             if (savedFont) setFontSizeState(parseInt(savedFont));
+
+            const savedViewMode = localStorage.getItem("mukabele_view_mode");
+            if (savedViewMode === 'paper') setViewModeState('paper');
         } catch (e) { }
     }, []);
 
@@ -141,6 +147,11 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
         const val = Math.max(12, Math.min(36, s));
         setFontSizeState(val);
         localStorage.setItem("mukabele_font", val.toString());
+    };
+
+    const setViewMode = (mode: 'list' | 'paper') => {
+        setViewModeState(mode);
+        localStorage.setItem("mukabele_view_mode", mode);
     };
 
     const setNushaIndex = (n: number) => {
@@ -233,7 +244,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
     // Delete a line from backend and local state
     const deleteLine = useCallback(async (lineNo: number): Promise<boolean> => {
         try {
-            const res = await fetch(`http://localhost:8000/api/projects/${projectId}/lines/delete`, {
+            const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/lines/delete`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ line_no: lineNo, nusha_index: nushaIndex })
@@ -294,7 +305,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
             setIsLoading(true);
             try {
                 // 1. Fetch Alignment Data
-                const resData = await fetch(`http://localhost:8000/api/projects/${pId}/mukabele-data`);
+                const resData = await fetch(`http://127.0.0.1:8000/api/projects/${pId}/mukabele-data`);
                 if (!resData.ok) {
                     // Try to handle non-ok by setting empty data or throwing
                     throw new Error("Alignment data fetch failed");
@@ -303,7 +314,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
                 setData(jsonData);
 
                 // 2. Fetch Pages
-                const resPages = await fetch(`http://localhost:8000/api/projects/${pId}/pages?nusha_index=${nushaIndex}`);
+                const resPages = await fetch(`http://127.0.0.1:8000/api/projects/${pId}/pages?nusha_index=${nushaIndex}`);
                 if (resPages.ok) {
                     const pagesData = await resPages.json();
 
@@ -496,6 +507,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
         activePageKey, setActivePageKey,
         zoom, setZoom,
         fontSize, setFontSize,
+        viewMode, setViewMode,
         searchQuery, setSearchQuery,
         searchMatches, currentSearchIndex,
         nextSearch, prevSearch,

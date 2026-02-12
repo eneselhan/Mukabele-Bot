@@ -74,7 +74,7 @@ export function TTSProvider({ children }: { children: React.ReactNode }) {
         try {
             // Check if backend has cached audio or generate on fly
             // We'll send tokens to /api/tts
-            const res = await fetch("http://localhost:8000/api/tts", {
+            const res = await fetch("http://127.0.0.1:8000/api/tts", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

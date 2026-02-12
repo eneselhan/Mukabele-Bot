@@ -24,7 +24,7 @@ function MukabeleContent() {
 
     useEffect(() => {
         setIsLoading(true);
-        fetch(`http://localhost:8000/api/projects/${projectId}/mukabele-data`)
+        fetch(`http://127.0.0.1:8000/api/projects/${projectId}/mukabele-data`)
             .then(res => res.json())
             .then(res => {
                 setData(res);

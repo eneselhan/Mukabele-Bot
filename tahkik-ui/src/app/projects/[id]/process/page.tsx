@@ -36,7 +36,7 @@ export default function CompactListDashboard() {
     // Sürekli Durum Kontrolü (Polling)
     const fetchStatus = async () => {
         try {
-            const res = await fetch(`http://localhost:8000/api/projects/${projectId}/status`);
+            const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/status`);
             const data = await res.json();
             setStatus(data);
 
@@ -103,7 +103,7 @@ export default function CompactListDashboard() {
         setDraggedItem(null);
         // Persist order
         try {
-            await fetch(`http://localhost:8000/api/projects/${projectId}/order`, {
+            await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/order`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ order: nushaOrder })
@@ -118,7 +118,7 @@ export default function CompactListDashboard() {
 
         for (const n of nushaIds) {
             try {
-                const res = await fetch(`http://localhost:8000/api/projects/${projectId}/nusha/${n}/pipeline/status`);
+                const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/nusha/${n}/pipeline/status`);
                 const data = await res.json();
                 setPipelineStatuses(prev => ({ ...prev, [n]: data }));
             } catch (e) { console.error(`Pipeline status error for nusha ${n}:`, e); }
@@ -128,7 +128,7 @@ export default function CompactListDashboard() {
     // Fetch pipeline outputs for a specific nusha (called on demand)
     const fetchPipelineOutputs = useCallback(async (nushaIndex: number) => {
         try {
-            const res = await fetch(`http://localhost:8000/api/projects/${projectId}/nusha/${nushaIndex}/pipeline/outputs`);
+            const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/nusha/${nushaIndex}/pipeline/outputs`);
             if (res.ok) {
                 const data = await res.json();
                 setPipelineOutputs(prev => ({ ...prev, [nushaIndex]: data }));
@@ -164,7 +164,7 @@ export default function CompactListDashboard() {
 
     const saveName = async (n: number, name: string) => {
         try {
-            await fetch(`http://localhost:8000/api/projects/${projectId}/nusha/${n}/rename`, {
+            await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/nusha/${n}/rename`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name })
@@ -186,7 +186,7 @@ export default function CompactListDashboard() {
         formData.append('nusha_index', nushaIndex.toString());
 
         try {
-            const res = await fetch(`http://localhost:8000/api/projects/${projectId}/upload`, {
+            const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/upload`, {
                 method: 'POST',
                 body: formData
             });
@@ -204,7 +204,7 @@ export default function CompactListDashboard() {
         if (!confirm("Bu nüşayı ve tüm verilerini silmek istediğinize emin misiniz?")) return;
 
         try {
-            await fetch(`http://localhost:8000/api/projects/${projectId}/files`, {
+            await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/files`, {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ file_type: type, nusha_index: nushaIndex })
@@ -218,7 +218,7 @@ export default function CompactListDashboard() {
             setProcessing(`full-${nushaIndex}`);
             try {
                 // Unified endpoint: pipeline/full
-                await fetch(`http://localhost:8000/api/projects/${projectId}/nusha/${nushaIndex}/pipeline/full`, {
+                await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/nusha/${nushaIndex}/pipeline/full`, {
                     method: 'POST'
                 });
                 setExpandedPipelines(prev => ({ ...prev, [nushaIndex]: true }));
@@ -231,7 +231,7 @@ export default function CompactListDashboard() {
         setProcessing(`${step}-${nushaIndex}`);
         const dpi = dpiSelections[nushaIndex] || 300;
         try {
-            await fetch(`http://localhost:8000/api/projects/${projectId}/nusha/${nushaIndex}/pipeline/${step}?dpi=${dpi}`, {
+            await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/nusha/${nushaIndex}/pipeline/${step}?dpi=${dpi}`, {
                 method: 'POST'
             });
         } catch (e) { console.error(e); }
@@ -242,7 +242,7 @@ export default function CompactListDashboard() {
         if (!confirm("Bu işlem bu aşamadaki verileri sıfırlayacak. Emin misiniz?")) return;
 
         try {
-            await fetch(`http://localhost:8000/api/projects/${projectId}/nusha/${nushaIndex}/pipeline/${step}`, {
+            await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/nusha/${nushaIndex}/pipeline/${step}`, {
                 method: 'DELETE'
             });
 
@@ -561,10 +561,10 @@ export default function CompactListDashboard() {
                                                                                 <div
                                                                                     key={idx}
                                                                                     className="relative group cursor-pointer flex-shrink-0"
-                                                                                    onClick={() => setLightboxImage(`http://localhost:8000/media/${projectId}/nusha_${n}/pages/${filename}`)}
+                                                                                    onClick={() => setLightboxImage(`http://127.0.0.1:8000/media/${projectId}/nusha_${n}/pages/${filename}`)}
                                                                                 >
                                                                                     <img
-                                                                                        src={`http://localhost:8000/media/${projectId}/nusha_${n}/pages/${filename}`}
+                                                                                        src={`http://127.0.0.1:8000/media/${projectId}/nusha_${n}/pages/${filename}`}
                                                                                         alt={filename}
                                                                                         className="h-32 w-auto rounded border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-300 transition-all"
                                                                                         loading="lazy"
@@ -646,11 +646,11 @@ export default function CompactListDashboard() {
                                                                     <div className="overflow-y-auto max-h-64 space-y-1">
                                                                         {outputs.lines.map((filename: string, idx: number) => (
                                                                             <div key={idx} className="flex items-center gap-2 bg-white rounded border border-slate-100 p-1 hover:border-blue-200 transition-colors cursor-pointer"
-                                                                                onClick={() => setLightboxImage(`http://localhost:8000/media/${projectId}/nusha_${n}/lines/${filename}`)}
+                                                                                onClick={() => setLightboxImage(`http://127.0.0.1:8000/media/${projectId}/nusha_${n}/lines/${filename}`)}
                                                                             >
                                                                                 <span className="text-[9px] text-slate-400 w-6 text-right shrink-0">{idx + 1}</span>
                                                                                 <img
-                                                                                    src={`http://localhost:8000/media/${projectId}/nusha_${n}/lines/${filename}`}
+                                                                                    src={`http://127.0.0.1:8000/media/${projectId}/nusha_${n}/lines/${filename}`}
                                                                                     alt={filename}
                                                                                     className="h-6 w-auto max-w-full rounded"
                                                                                     loading="lazy"
@@ -732,11 +732,11 @@ export default function CompactListDashboard() {
                                                                                 <div key={idx} className="flex items-start gap-2 bg-white rounded border border-slate-100 px-2 py-1 hover:border-blue-200 transition-colors">
                                                                                     <span className="text-[9px] text-slate-400 w-6 text-right shrink-0 pt-0.5">{idx + 1}</span>
                                                                                     <img
-                                                                                        src={`http://localhost:8000/media/${projectId}/nusha_${n}/lines/${lineImage}`}
+                                                                                        src={`http://127.0.0.1:8000/media/${projectId}/nusha_${n}/lines/${lineImage}`}
                                                                                         alt={lineImage}
                                                                                         className="h-5 w-auto max-w-[120px] rounded border border-slate-200 shrink-0 cursor-pointer hover:border-blue-300 hover:shadow-sm transition-all mt-0.5"
                                                                                         loading="lazy"
-                                                                                        onClick={() => setLightboxImage(`http://localhost:8000/media/${projectId}/nusha_${n}/lines/${lineImage}`)}
+                                                                                        onClick={() => setLightboxImage(`http://127.0.0.1:8000/media/${projectId}/nusha_${n}/lines/${lineImage}`)}
                                                                                     />
                                                                                     <p className="text-xs text-slate-700 flex-1 font-medium" dir="rtl" style={{ fontFamily: "'Amiri', 'Noto Naskh Arabic', serif", lineHeight: 1.6 }}>
                                                                                         {item.text || <span className="text-slate-300 italic">[boş]</span>}

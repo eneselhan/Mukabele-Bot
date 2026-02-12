@@ -4,7 +4,8 @@ import React, { useState, useMemo } from "react";
 import { useMukabele } from "./MukabeleContext";
 import {
     Search, X, ChevronUp, ChevronDown,
-    Type, AlertTriangle, ChevronRight
+    Type, AlertTriangle, ChevronRight,
+    List, FileText
 } from "lucide-react";
 
 export default function TextPanelToolbar() {
@@ -13,7 +14,8 @@ export default function TextPanelToolbar() {
         searchQuery, setSearchQuery,
         searchMatches, currentSearchIndex,
         nextSearch, prevSearch,
-        lines, setActiveLine
+        lines, setActiveLine,
+        viewMode, setViewMode
     } = useMukabele();
 
     const [showSearch, setShowSearch] = useState(false);
@@ -68,6 +70,22 @@ export default function TextPanelToolbar() {
                     >
                         <Search size={14} />
                     </button>
+
+                    {/* View Mode Toggle */}
+                    <div className="flex bg-slate-700/50 rounded-lg p-0.5" title="Görünüm Modu">
+                        <button
+                            onClick={() => setViewMode('list')}
+                            className={`p-1 rounded transition-colors ${viewMode === 'list' ? 'bg-slate-600 text-amber-400 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                        >
+                            <List size={13} />
+                        </button>
+                        <button
+                            onClick={() => setViewMode('paper')}
+                            className={`p-1 rounded transition-colors ${viewMode === 'paper' ? 'bg-slate-600 text-amber-400 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                        >
+                            <FileText size={13} />
+                        </button>
+                    </div>
 
                     {/* Font size */}
                     <div className="flex items-center gap-1 border-l border-slate-700 pl-3">

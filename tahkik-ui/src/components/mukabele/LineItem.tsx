@@ -45,7 +45,7 @@ export default function LineItem({ line, isActive, onSelect, fontSize }: LineIte
         if (isSaving) return;
         setIsSaving(true);
         try {
-            const res = await fetch(`http://localhost:8000/api/projects/${projectId}/lines/update`, {
+            const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/lines/update`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

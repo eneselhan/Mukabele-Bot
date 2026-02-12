@@ -3,6 +3,7 @@
 import React, { useEffect, useRef } from "react";
 import { useMukabele } from "./MukabeleContext";
 import LineItem from "./LineItem";
+import DocumentView from "./DocumentView";
 import TextPanelToolbar from "./TextPanelToolbar";
 import TextPanelFooter from "./TextPanelFooter";
 
@@ -12,7 +13,8 @@ export default function LineList() {
         setActiveLine,
         fontSize,
         pages,
-        activePageKey
+        activePageKey,
+        viewMode
     } = useMukabele();
 
     const listRef = useRef<HTMLDivElement>(null);
@@ -36,29 +38,33 @@ export default function LineList() {
         <div className="flex flex-col h-full bg-slate-900 relative">
             <TextPanelToolbar />
 
-            <div
-                ref={listRef}
-                className="flex-1 overflow-y-auto px-3 py-2 scroll-smooth"
-            >
-                {!displayLines.length && (
-                    <div className="text-slate-500 text-center mt-10 text-sm">
-                        {activePageKey ? "Bu sayfada metin yok." : "Sayfa seçili değil."}
-                    </div>
-                )}
+            {viewMode === 'paper' ? (
+                <DocumentView />
+            ) : (
+                <div
+                    ref={listRef}
+                    className="flex-1 overflow-y-auto px-3 py-2 scroll-smooth"
+                >
+                    {!displayLines.length && (
+                        <div className="text-slate-500 text-center mt-10 text-sm">
+                            {activePageKey ? "Bu sayfada metin yok." : "Sayfa seçili değil."}
+                        </div>
+                    )}
 
-                {displayLines.map((line, i) => {
-                    const uniqueKey = line.line_no != null ? line.line_no : `idx-${i}`;
-                    return (
-                        <LineItem
-                            key={uniqueKey}
-                            line={line}
-                            isActive={line.line_no === activeLine}
-                            onSelect={() => line.line_no != null && setActiveLine(line.line_no)}
-                            fontSize={fontSize}
-                        />
-                    );
-                })}
-            </div>
+                    {displayLines.map((line, i) => {
+                        const uniqueKey = line.line_no != null ? line.line_no : `idx-${i}`;
+                        return (
+                            <LineItem
+                                key={uniqueKey}
+                                line={line}
+                                isActive={line.line_no === activeLine}
+                                onSelect={() => line.line_no != null && setActiveLine(line.line_no)}
+                                fontSize={fontSize}
+                            />
+                        );
+                    })}
+                </div>
+            )}
 
             <TextPanelFooter />
         </div>

@@ -23,7 +23,12 @@ from src.config import BASE_DIR
 from src.services.manuscript_engine import ManuscriptEngine
 from src.config import PROJECTS_DIR
 from src.services.alignment_service import AlignmentService
+from src.services.alignment_service import AlignmentService
 from src.services.tts_service import TTSService
+from docx import Document
+from docx.shared import Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from fastapi.responses import FileResponse
 
 # --- GLOBAL STATE ---
 # Track current job status
@@ -204,18 +209,355 @@ def delete_project(project_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/projects/{project_id}/trash")
-def trash_project(project_id: str):
-    """Soft-delete: marks a project as trashed."""
-    try:
-        metadata = project_manager.get_metadata(project_id)
-        metadata["trashed"] = True
-        project_path = project_manager.get_project_path(project_id)
         with open(project_path / "metadata.json", "w", encoding="utf-8") as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
         return {"status": "success", "message": "Proje çöp kutusuna taşındı."}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Proje bulunamadı")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ... (existing imports)
+from docx.oxml import OxmlElement, ns
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+# --- HELPER FUNCTIONS ---
+
+from docx.opc.constants import CONTENT_TYPE as CT
+from docx.opc.part import Part
+from docx.oxml.ns import qn
+from docx.oxml import parse_xml
+from docx.oxml.xmlchemy import serialize_for_reading
+
+def get_or_create_footnotes_part(doc_part):
+    try:
+        return doc_part.footnotes_part
+    except AttributeError:
+        # Check if relationship already exists
+        # doc_part.rels is a Relationships object
+        # It's iterable of Relationship
+        # But wait, python-docx Relationships object iteration?
+        # It behaves like a dict of rId -> rel usually. or values.
+        
+        rel_type = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes"
+        
+        for rel in doc_part.rels.values():
+            if rel.reltype == rel_type:
+                return rel.target_part
+
+        # Create Footnotes Part
+        package = doc_part.package
+        partname = package.next_partname("/word/footnotes%d.xml")
+        ct = "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"
+        
+        xml_bytes = (
+            b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            b'<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            b'  <w:footnote w:id="-1" w:type="separator">'
+            b'    <w:p><w:r><w:separator/></w:r></w:p>'
+            b'  </w:footnote>'
+            b'  <w:footnote w:id="0" w:type="continuationSeparator">'
+            b'    <w:p><w:r><w:continuationSeparator/></w:r></w:p>'
+            b'  </w:footnote>'
+            b'</w:footnotes>'
+        )
+        
+        new_part = Part(
+            partname,
+            ct,
+            xml_bytes,
+            package
+        )
+        
+        # Add to package parts list
+        package.parts.append(new_part)
+        
+        # Add relationship
+        doc_part.relate_to(new_part, rel_type)
+        
+        return new_part
+
+def add_footnote(run, text):
+    """
+    Adds a footnote to a run.
+    """
+    # 1. Add Footnote Reference in Run
+    # Create the footnote reference element
+    footnote_ref = OxmlElement('w:footnoteReference')
+    
+    # Get or create footnotes part
+    footnotes_part = get_or_create_footnotes_part(run.part.document.part)
+    
+    # We need to find the next ID. 
+    # Since we don't have python-docx wrapper for footnotes, we parse the xml
+    
+    # If footnotes_part is a custom Part, it might not have 'footnotes' property or access to element easily via standard API
+    # But it has .element or .blob
+    # If it's the standard Part class, it has .blob (it's loaded), but maybe not .element if not unmarshalled?
+    # python-docx parts usually load element on demand.
+    # Our custom created part has blob.
+    
+    # If it's a freshly created part from us, it's generic Part.
+    # If it's existing (hypothetically), it might be specialized.
+    
+    # Let's parse the blob to find IDs
+    # But wait, modifying the blob/element of the part:
+    # If we modify the element, we need to make sure the part saves the modified element.
+    # The Generic Part doesn't parse XML automatically into ._element.
+    
+    # Implementation Strategy: Read blob -> Parse -> Modify -> Serialize -> Write back to blob
+    # This is inefficient but safe for generic parts.
+    
+    footnotes_xml = parse_xml(footnotes_part.blob)
+    
+    # Find max ID
+    ids = [int(fn.get(qn('w:id'))) for fn in footnotes_xml.findall(qn('w:footnote'))]
+    next_id = max(ids) + 1 if ids else 1
+    
+    # Create new footnote element
+    footnote = OxmlElement('w:footnote')
+    footnote.set(qn('w:id'), str(next_id))
+    
+    # Create Paragraph
+    paragraph = OxmlElement('w:p')
+    
+    # --- CRITICAL: Set Paragraph to RTL ---
+    p_pr = OxmlElement('w:pPr')
+    bidi = OxmlElement('w:bidi') # RTL Flag
+    p_pr.append(bidi)
+    
+    # Style (FootnoteText)
+    p_style = OxmlElement('w:pStyle')
+    p_style.set(qn('w:val'), 'FootnoteText')
+    p_pr.append(p_style)
+    paragraph.append(p_pr)
+    
+    footnote.append(paragraph)
+    
+    # 4. Create Run with Footnote Text
+    run_xml = OxmlElement('w:r')
+    
+    # Run Properties (RTL + Font)
+    r_pr = OxmlElement('w:rPr')
+    r_style = OxmlElement('w:rStyle')
+    r_style.set(qn('w:val'), 'FootnoteReference')
+    r_pr.append(r_style)
+    
+    rtl = OxmlElement('w:rtl')
+    r_pr.append(rtl)
+    
+    # Set Font
+    r_fonts = OxmlElement('w:rFonts')
+    r_fonts.set(qn('w:ascii'), 'Traditional Arabic')
+    r_fonts.set(qn('w:hAnsi'), 'Traditional Arabic')
+    r_fonts.set(qn('w:cs'), 'Traditional Arabic')
+    r_pr.append(r_fonts)
+    
+    run_xml.append(r_pr)
+    
+    # 5. Add Footnote Reference Marker (The number/char)
+    # The actual numbering is done by <w:footnoteRef/>
+    footnote_marker = OxmlElement('w:footnoteRef')
+    run_xml.append(footnote_marker)
+    
+    # Add a space after the number
+    t_space = OxmlElement('w:t')
+    t_space.text = " "
+    t_space.set(qn('xml:space'), 'preserve')
+    run_xml.append(t_space)
+    
+    paragraph.append(run_xml)
+    
+    # 6. Add the Actual Text Content
+    msg_run = OxmlElement('w:r')
+    msg_r_pr = OxmlElement('w:rPr')
+    
+    msg_rtl = OxmlElement('w:rtl')
+    msg_r_pr.append(msg_rtl)
+    
+    msg_fonts = OxmlElement('w:rFonts')
+    msg_fonts.set(qn('w:ascii'), 'Traditional Arabic')
+    msg_fonts.set(qn('w:hAnsi'), 'Traditional Arabic')
+    msg_fonts.set(qn('w:cs'), 'Traditional Arabic')
+    msg_r_pr.append(msg_fonts)
+    
+    msg_run.append(msg_r_pr)
+    
+    t_text = OxmlElement('w:t')
+    t_text.text = text
+    msg_run.append(t_text)
+    
+    paragraph.append(msg_run)
+    
+    # 7. Append Footnote to Footnotes XML
+    footnotes_xml.append(footnote)
+    
+    # 8. Serialize and Update Part Blob
+    footnotes_part._blob = serialize_for_reading(footnotes_xml)
+    
+    # 9. Set Reference ID on the Run's FootnoteReference
+    footnote_ref.set(qn('w:id'), str(next_id))
+    run._r.append(footnote_ref)
+    # ---------------------------------
+
+
+
+@app.post("/api/projects/{project_id}/export/docx")
+def export_project_docx(project_id: str):
+    """
+    Exports the project text to a Word document (.docx) with RTL footnotes.
+    """
+    try:
+        # Get project info
+        metadata = project_manager.get_metadata(project_id)
+        project_name = metadata.get("name", "Project")
+        footnotes = metadata.get("footnotes", [])
+        
+        # Get alignment data
+        nusha_dir = project_manager.get_nusha_dir(project_id, 1) # Export primary nusha for now
+        alignment_path = nusha_dir / "alignment.json"
+        
+        if not alignment_path.exists():
+             raise HTTPException(status_code=404, detail="Hizalanmış metin bulunamadı.")
+             
+        with open(alignment_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            
+        aligned_lines = data.get("aligned", [])
+        
+        # Create Document
+        doc = Document()
+        
+        # Add Title
+        title = doc.add_heading(project_name, 0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # Add Content
+        # Add Content (Single Continuous Paragraph)
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        p.paragraph_format.bidi = True # RTL Paragraph
+
+        for line in aligned_lines:
+            text = line.get("best", {}).get("raw", "")
+            if not text: continue
+
+            line_no = line.get("line_no", 0)
+            
+            # Find footnotes for this line
+            line_footnotes = [fn for fn in footnotes if fn.get("line_no") == line_no]
+            # Sort by index
+            line_footnotes.sort(key=lambda x: x.get("index", 0))
+            
+            current_idx = 0
+            
+            # If no footnotes, just add text + space
+            if not line_footnotes:
+                run = p.add_run(text)
+                run.font.name = "Traditional Arabic"
+                run.font.size = Pt(16)
+                run.font.rtl = True
+                
+                # Add separator space
+                sp = p.add_run(" ")
+                sp.font.size = Pt(16)
+                continue
+                
+            # Interleave text and footnotes
+            for fn in line_footnotes:
+                fn_idx = fn.get("index", 0)
+                
+                # Add Text segment
+                if fn_idx > current_idx:
+                    segment = text[current_idx:fn_idx]
+                    run = p.add_run(segment)
+                    run.font.name = "Traditional Arabic"
+                    run.font.size = Pt(16)
+                    run.font.rtl = True
+                
+                # Format Footnote Content
+                nusha_idx = fn.get("nusha_index", 1)
+                sigla = metadata.get("nusha_siglas", {}).get(str(nusha_idx))
+                if not sigla:
+                     sigla = "A" if nusha_idx == 1 else "B" if nusha_idx == 2 else "C" if nusha_idx == 3 else "D"
+                
+                ftype = fn.get("type", "variation")
+                raw_content = fn.get("content", "")
+                
+                formatted_fn = ""
+                if ftype == "variation":
+                    formatted_fn = f"\u200F{sigla}:{raw_content}"
+                elif ftype == "omission":
+                     formatted_fn = f"\u200F{sigla} - {raw_content}"
+                elif ftype == "addition":
+                     formatted_fn = f"\u200F{sigla} + {raw_content}"
+                else:
+                     formatted_fn = f"\u200F{sigla} {raw_content}"
+
+                # Add Footnote
+                # Use last run or create empty one
+                target_run = p.add_run("")
+                target_run.font.name = "Traditional Arabic"
+                target_run.font.size = Pt(16)
+                target_run.font.rtl = True
+
+                add_footnote(target_run, formatted_fn)
+                
+                current_idx = fn_idx
+                
+            # Add remaining text
+            if current_idx < len(text):
+                segment = text[current_idx:]
+                run = p.add_run(segment)
+                run.font.name = "Traditional Arabic"
+                run.font.size = Pt(16)
+                run.font.rtl = True
+
+            # Add separator space after line
+            sp = p.add_run(" ")
+            sp.font.size = Pt(16)
+                
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Export Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Export Failed: {str(e)}")
+
+    # Add timestamp to filename to avoid permission errors if file is open
+    import time
+    timestamp = int(time.time())
+    filename = f"{project_name}_export_{timestamp}.docx"
+    
+    # Sanitize filename
+    # Ensure we keep the extension valid
+    clean_name = "".join([c for c in project_name if c.isalpha() or c.isdigit() or c in " ._-"])
+    filename = f"{clean_name}_export_{timestamp}.docx"
+    
+    output_path = project_manager.projects_dir / project_id / filename
+    
+    try:
+        doc.save(output_path)
+    except PermissionError:
+        raise HTTPException(status_code=400, detail="Dosya açık olduğu için kaydedilemedi. Lütfen Word dosyasını kapatıp tekrar deneyin.")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Dosya kaydedilirken hata oluştu: {str(e)}")
+    
+    return FileResponse(
+        path=output_path, 
+        filename=filename, 
+        media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )
+
+class UpdateFootnotesRequest(BaseModel):
+    footnotes: List[Dict]
+
+@app.post("/api/projects/{project_id}/footnotes")
+def update_footnotes(project_id: str, req: UpdateFootnotesRequest):
+    try:
+        project_manager.update_footnotes(project_id, req.footnotes)
+        return {"status": "success", "count": len(req.footnotes)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -269,6 +611,29 @@ class UpdateNameRequest(BaseModel):
 def update_nusha_name(project_id: str, nusha_index: int, req: UpdateNameRequest):
     project_manager.update_nusha_name(project_id, nusha_index, req.name)
     return {"status": "success", "name": req.name}
+
+class UpdateSiglaRequest(BaseModel):
+    nusha_index: int
+    sigla: str
+
+@app.post("/api/projects/{project_id}/sigla")
+def update_sigla(project_id: str, req: UpdateSiglaRequest):
+    try:
+        project_manager.update_nusha_sigla(project_id, req.nusha_index, req.sigla)
+        return {"status": "success", "sigla": req.sigla}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class UpdateBaseNushaRequest(BaseModel):
+    nusha_index: int
+
+@app.post("/api/projects/{project_id}/base-nusha")
+def update_base_nusha(project_id: str, req: UpdateBaseNushaRequest):
+    try:
+        project_manager.update_project_base_nusha(project_id, req.nusha_index)
+        return {"status": "success", "base_nusha": req.nusha_index}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 class UpdateOrderRequest(BaseModel):
     order: List[int]
@@ -794,8 +1159,20 @@ def get_mukabele_data(project_id: str):
             "aligned_alt4": [],
             "has_alt": False,
             "has_alt3": False,
-            "has_alt4": False
+            "has_alt4": False,
+            "footnotes": [],
+            "nusha_siglas": {},
+            "base_nusha_index": 1
         }
+        
+        # Load Project Metadata (Footnotes, Siglas, Base Nusha)
+        try:
+            meta = project_manager.get_metadata(project_id)
+            final_data["footnotes"] = meta.get("footnotes", [])
+            final_data["nusha_siglas"] = meta.get("nusha_siglas", {})
+            final_data["base_nusha_index"] = meta.get("base_nusha_index", 1)
+        except:
+            pass
 
         # Helper to load from nusha dir without failing
         def load_nusha(n_idx):
@@ -1012,6 +1389,39 @@ def delete_line(project_id: str, req: DeleteLineRequest):
         print(f"[API] Delete Line Exception: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+class MergeLinesRequest(BaseModel):
+    nusha_index: int
+    line_numbers: List[int]
+
+@app.post("/api/projects/{project_id}/lines/merge")
+def merge_lines(project_id: str, req: MergeLinesRequest):
+    try:
+        result = project_manager.merge_nusha_lines(project_id, req.nusha_index, req.line_numbers)
+        return {"ok": True, "lines": result.get("lines")}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        print(f"[API] Merge Lines Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class SplitLineRequest(BaseModel):
+    nusha_index: int
+    line_no: int
+    split_index: int
+
+@app.post("/api/projects/{project_id}/lines/split")
+def split_line(project_id: str, req: SplitLineRequest):
+    try:
+        result = project_manager.split_nusha_line(project_id, req.nusha_index, req.line_no, req.split_index)
+        return {"ok": True, "lines": result.get("lines")}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        print(f"[API] Split Line Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/tts")
 def tts_generate(req: TTSRequest):
     try:
@@ -1027,6 +1437,48 @@ def tts_generate(req: TTSRequest):
         return result
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+class ShiftLineRequest(BaseModel):
+    line_no: int
+    direction: str # "prev" | "next"
+    split_index: int
+    nusha_index: int = 1
+
+@app.post("/api/projects/{project_id}/lines/shift")
+def shift_line_content(project_id: str, req: ShiftLineRequest):
+    try:
+        res = project_manager.shift_line_content(
+            project_id=project_id,
+            nusha_index=req.nusha_index,
+            line_no=req.line_no,
+            direction=req.direction,
+            split_index=req.split_index
+        )
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error"))
+        return res
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/projects/{project_id}/lines/shift")
+def shift_line_content(project_id: str, req: ShiftLineRequest):
+    try:
+        res = project_manager.shift_line_content(
+            project_id=project_id,
+            nusha_index=req.nusha_index,
+            line_no=req.line_no,
+            direction=req.direction,
+            split_index=req.split_index
+        )
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error"))
+        return res
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run("src.api_server:app", host="0.0.0.0", port=8000, reload=True)

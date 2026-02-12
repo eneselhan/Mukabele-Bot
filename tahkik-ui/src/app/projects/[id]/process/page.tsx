@@ -27,6 +27,7 @@ export default function CompactListDashboard() {
     const [expandedPipelines, setExpandedPipelines] = useState<Record<number, boolean>>({});
     const [nushaOrder, setNushaOrder] = useState<number[]>([]);
     const [draggedItem, setDraggedItem] = useState<number | null>(null);
+    const [siglas, setSiglas] = useState<Record<number, string>>({});
     // Pipeline output preview state
     const [pipelineOutputs, setPipelineOutputs] = useState<Record<number, any>>({});
     const [outputPreviews, setOutputPreviews] = useState<Record<string, boolean>>({});
@@ -41,6 +42,13 @@ export default function CompactListDashboard() {
             setStatus(data);
 
             // Sync order: If backend has order, use it. If not, default to ID sort.
+            if (data.nusha_siglas) {
+                const numericSiglas: Record<number, string> = {};
+                Object.entries(data.nusha_siglas).forEach(([key, val]) => {
+                    numericSiglas[Number(key)] = val as string;
+                });
+                setSiglas(numericSiglas);
+            }
             if (data.nushas) {
                 const currentIds = Object.values(data.nushas).map((n: any) => n.id).sort((a: any, b: any) => a - b);
 
@@ -172,6 +180,17 @@ export default function CompactListDashboard() {
             setEditingName(null);
             fetchStatus();
         } catch (e) { console.error(e); }
+    };
+
+    const updateSigla = async (n: number, sigla: string) => {
+        try {
+            await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/sigla`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nusha_index: n, sigla })
+            });
+            setSiglas(prev => ({ ...prev, [n]: sigla }));
+        } catch (e) { console.error("Sigla update failed", e); }
     };
 
     const handleUpload = async (files: FileList | null, type: string, nushaIndex: number, loadingKey: string) => {
@@ -362,6 +381,20 @@ export default function CompactListDashboard() {
                                         ${isUploaded ? 'bg-purple-100 text-purple-700' : 'bg-slate-200 text-slate-400'}
                                     `}>
                                                     {n}
+                                                </div>
+
+                                                <div className="flex flex-col">
+                                                    <span className="text-[10px] text-slate-400 font-bold uppercase">Rumuz</span>
+                                                    <input
+                                                        className="w-10 text-center bg-slate-50 border border-slate-200 rounded py-0.5 text-xs text-slate-700 font-mono focus:border-purple-400 focus:ring-1 focus:ring-purple-400 outline-none uppercase"
+                                                        value={siglas[n] || ""}
+                                                        placeholder={n === 1 ? "A" : n === 2 ? "B" : "C"}
+                                                        onChange={(e) => {
+                                                            const val = e.target.value.toUpperCase();
+                                                            setSiglas(prev => ({ ...prev, [n]: val }));
+                                                        }}
+                                                        onBlur={(e) => updateSigla(n, e.target.value)}
+                                                    />
                                                 </div>
 
                                                 {editingName?.index === n ? (

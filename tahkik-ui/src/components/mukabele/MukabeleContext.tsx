@@ -21,6 +21,15 @@ export interface LineData {
     // ... add other fields as needed
 }
 
+export interface Footnote {
+    id: string;
+    line_no: number;
+    index: number; // char index in line
+    type: "variation" | "omission" | "addition";
+    nusha_index: number;
+    content: string;
+}
+
 export interface MukabeleData {
     aligned: LineData[]; // Nusha 1 (Primary)
     aligned_alt?: LineData[]; // Nusha 2
@@ -30,6 +39,9 @@ export interface MukabeleData {
     has_alt3?: boolean;
     has_alt4?: boolean;
     default_nusha?: number;
+    nusha_siglas?: { [key: string]: string };
+    base_nusha_index?: number;
+    footnotes?: Footnote[];
     // ... spellcheck data, etc.
 }
 
@@ -45,6 +57,12 @@ interface MukabeleContextType {
     setActiveLine: (lineNo: number | null) => void;
     activePageKey: string | null;
     setActivePageKey: (key: string | null) => void;
+
+    // Footnotes
+    footnotes: Footnote[];
+    addFootnote: (footnote: Footnote) => Promise<void>;
+    deleteFootnote: (id: string) => Promise<void>;
+    updateFootnote: (id: string, newContent: string) => Promise<void>;
 
     // Search
     searchQuery: string;
@@ -71,15 +89,21 @@ interface MukabeleContextType {
     // Nusha State
     nushaIndex: number;
     setNushaIndex: (index: number) => void; // 1, 2, 3, 4
+    baseNushaIndex: number;
+    updateBaseNusha: (index: number) => Promise<void>;
+    siglas: { [key: string]: string };
+    updateSigla: (nushaIndex: number, sigla: string) => Promise<void>;
 
     // Helpers
     lines: LineData[]; // Returns active lines
     pages: PageData[]; // Derived pages index
     updateLineText: (lineNo: number, newText: string) => void;
     deleteLine: (lineNo: number) => Promise<boolean>;
+    mergeLines: (nushaIndex: number, lineNumbers: number[]) => Promise<void>;
+    splitLine: (nushaIndex: number, lineNo: number, splitIndex: number) => Promise<void>;
 }
 
-interface PageData {
+export interface PageData {
     key: string;
     lines: LineData[];
     page_image: string;
@@ -104,6 +128,51 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
     const [fontSize, setFontSizeState] = useState(23);
     const [viewMode, setViewModeState] = useState<'list' | 'paper'>('list');
     const [nushaIndex, setNushaIndexState] = useState(1);
+    const [baseNushaIndex, setBaseNushaIndex] = useState(1);
+    const [siglas, setSiglas] = useState<{ [key: string]: string }>({});
+
+    // Footnotes
+    const [footnotes, setFootnotes] = useState<Footnote[]>([]);
+
+    // Load initial data
+    useEffect(() => {
+        if (!data) return;
+        if (data.footnotes) {
+            setFootnotes(data.footnotes);
+        }
+    }, [data]);
+
+    // Save footnotes
+    const saveFootnotes = async (newFootnotes: Footnote[]) => {
+        if (!projectId) return;
+        try {
+            await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/footnotes`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ footnotes: newFootnotes })
+            });
+        } catch (e) {
+            console.error("Failed to save footnotes", e);
+        }
+    };
+
+    const addFootnote = async (footnote: Footnote) => {
+        const updated = [...footnotes, footnote];
+        setFootnotes(updated);
+        await saveFootnotes(updated);
+    };
+
+    const deleteFootnote = async (id: string) => {
+        const updated = footnotes.filter(f => f.id !== id);
+        setFootnotes(updated);
+        await saveFootnotes(updated);
+    };
+
+    const updateFootnote = async (id: string, newContent: string) => {
+        const updated = footnotes.map(f => f.id === id ? { ...f, content: newContent } : f);
+        setFootnotes(updated);
+        await saveFootnotes(updated);
+    };
 
     // Search
     const [searchQuery, setSearchQuery] = useState("");
@@ -282,6 +351,39 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
         }
     }, [projectId, nushaIndex, data, activeLine]);
 
+    // Update Sigla
+    const updateSigla = useCallback(async (nIndex: number, sigla: string) => {
+        try {
+            const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/sigla`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ nusha_index: nIndex, sigla })
+            });
+            if (res.ok) {
+                setSiglas(prev => ({ ...prev, [nIndex]: sigla }));
+            }
+        } catch (e) {
+            console.error("Failed to update sigla", e);
+        }
+    }, [projectId]);
+
+    // Update Base Nusha
+    const updateBaseNusha = useCallback(async (index: number) => {
+        try {
+            const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/base-nusha`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ nusha_index: index })
+            });
+            if (res.ok) {
+                setBaseNushaIndex(index);
+                setNushaIndex(index); // Auto-switch view
+            }
+        } catch (e) {
+            console.error("Failed to update base nusha", e);
+        }
+    }, [projectId, setNushaIndex]);
+
     // Derived Data
     const lines = React.useMemo(() => {
         if (!data) return [];
@@ -293,85 +395,105 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
         }
     }, [data, nushaIndex]);
 
-    // LOAD DATA EFFECT
-    useEffect(() => {
+    // LOAD DATA FUNCTION
+    const fetchData = useCallback(async () => {
         const pathParts = window.location.pathname.split("/");
         const pIdIndex = pathParts.indexOf("projects") + 1;
         const pId = (pIdIndex > 0 && pIdIndex < pathParts.length) ? pathParts[pIdIndex] : null;
 
         if (!pId) return;
 
-        const fetchData = async () => {
-            setIsLoading(true);
-            try {
-                // 1. Fetch Alignment Data
-                const resData = await fetch(`http://127.0.0.1:8000/api/projects/${pId}/mukabele-data`);
-                if (!resData.ok) {
-                    // Try to handle non-ok by setting empty data or throwing
-                    throw new Error("Alignment data fetch failed");
+        setIsLoading(true);
+        try {
+            // 1. Fetch Alignment Data
+            const resData = await fetch(`http://127.0.0.1:8000/api/projects/${pId}/mukabele-data`);
+            if (!resData.ok) {
+                // Try to handle non-ok by setting empty data or throwing
+                throw new Error("Alignment data fetch failed");
+            }
+            const jsonData = await resData.json();
+            setData(jsonData);
+            if (jsonData.nusha_siglas) {
+                setSiglas(jsonData.nusha_siglas);
+            } else {
+                // Initialize if missing
+                const initSiglas: any = {};
+                if (jsonData.aligned) initSiglas["1"] = "A";
+                if (jsonData.aligned_alt) initSiglas["2"] = "B";
+                if (jsonData.aligned_alt3) initSiglas["3"] = "C";
+                if (jsonData.aligned_alt4) initSiglas["4"] = "D";
+                setSiglas(initSiglas);
+            }
+
+            if (jsonData.base_nusha_index) {
+                setBaseNushaIndex(jsonData.base_nusha_index);
+                // Sync view if not locally overridden
+                // We check if localStorage has a value for this project
+                if (!localStorage.getItem(`mukabele_${pId}_nusha`)) {
+                    setNushaIndexState(jsonData.base_nusha_index);
                 }
-                const jsonData = await resData.json();
-                setData(jsonData);
+            }
 
-                // 2. Fetch Pages
-                const resPages = await fetch(`http://127.0.0.1:8000/api/projects/${pId}/pages?nusha_index=${nushaIndex}`);
-                if (resPages.ok) {
-                    const pagesData = await resPages.json();
+            // 2. Fetch Pages
+            const resPages = await fetch(`http://127.0.0.1:8000/api/projects/${pId}/pages?nusha_index=${nushaIndex}`);
+            if (resPages.ok) {
+                const pagesData = await resPages.json();
 
-                    // Map API pages to Frontend Pages
-                    const newPages: PageData[] = pagesData.map((p: any) => ({
-                        key: p.key,
-                        page_image: p.image_filename,
-                        page_name: `Sayfa ${p.index + 1}`,
-                        lines: []
-                    }));
+                // Map API pages to Frontend Pages
+                const newPages: PageData[] = pagesData.map((p: any) => ({
+                    key: p.key,
+                    page_image: p.image_filename,
+                    page_name: `Sayfa ${p.index + 1}`,
+                    lines: []
+                }));
 
-                    // Distribute lines to pages
-                    let currentLines: LineData[] = [];
-                    switch (nushaIndex) {
-                        case 2: currentLines = jsonData.aligned_alt || []; break;
-                        case 3: currentLines = jsonData.aligned_alt3 || []; break;
-                        case 4: currentLines = jsonData.aligned_alt4 || []; break;
-                        default: currentLines = jsonData.aligned || []; break;
-                    }
+                // Distribute lines to pages
+                let currentLines: LineData[] = [];
+                switch (nushaIndex) {
+                    case 2: currentLines = jsonData.aligned_alt || []; break;
+                    case 3: currentLines = jsonData.aligned_alt3 || []; break;
+                    case 4: currentLines = jsonData.aligned_alt4 || []; break;
+                    default: currentLines = jsonData.aligned || []; break;
+                }
 
-                    currentLines.forEach(line => {
-                        if (!line.page_image) return;
+                currentLines.forEach(line => {
+                    if (!line.page_image) return;
 
-                        // Normalize filenames for comparison (handle paths vs filenames)
-                        const linePageName = line.page_image.replace(/\\/g, "/").split("/").pop();
+                    // Normalize filenames for comparison (handle paths vs filenames)
+                    const linePageName = line.page_image.replace(/\\/g, "/").split("/").pop();
 
-                        const target = newPages.find(p => {
-                            const pPageName = p.page_image.replace(/\\/g, "/").split("/").pop();
-                            return pPageName === linePageName;
-                        });
-
-                        if (target) {
-                            target.lines.push(line);
-                        }
+                    const target = newPages.find(p => {
+                        const pPageName = p.page_image.replace(/\\/g, "/").split("/").pop();
+                        return pPageName === linePageName;
                     });
 
-                    setPages(newPages);
-
-                    // Set initial active page if none
-                    if (newPages.length > 0 && !activePageKeyRef.current) {
-                        const firstKey = newPages[0].key;
-                        setActivePageKey(firstKey);
-                        activePageKeyRef.current = firstKey;
+                    if (target) {
+                        target.lines.push(line);
                     }
-                } else {
-                    setPages([]);
+                });
+
+                setPages(newPages);
+
+                // Set initial active page if none
+                if (newPages.length > 0 && !activePageKeyRef.current) {
+                    const firstKey = newPages[0].key;
+                    setActivePageKey(firstKey);
+                    activePageKeyRef.current = firstKey;
                 }
-
-                setIsLoading(false);
-            } catch (err) {
-                console.error("Data load error:", err);
-                setIsLoading(false);
+            } else {
+                setPages([]);
             }
-        };
 
+            setIsLoading(false);
+        } catch (err) {
+            console.error("Data load error:", err);
+            setIsLoading(false);
+        }
+    }, [nushaIndex]);
+
+    useEffect(() => {
         fetchData();
-    }, [nushaIndex]); // removed activePageKey from deps to avoid loop
+    }, [fetchData]);
 
     // Search Logic
     useEffect(() => {
@@ -498,6 +620,38 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
     // Effect: Removed automatic sync to prevent reverts on autosave.
     // Page sync is now handled explicitly by setActiveLineWithSync.
 
+    const mergeLines = async (nushaIndex: number, lineNumbers: number[]) => {
+        if (!projectId) return;
+        try {
+            const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/lines/merge`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nusha_index: nushaIndex, line_numbers: lineNumbers })
+            });
+            if (res.ok) {
+                fetchData();
+            }
+        } catch (e) {
+            console.error("Merge lines failed", e);
+        }
+    };
+
+    const splitLine = async (nushaIndex: number, lineNo: number, splitIndex: number) => {
+        if (!projectId) return;
+        try {
+            const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/lines/split`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nusha_index: nushaIndex, line_no: lineNo, split_index: splitIndex })
+            });
+            if (res.ok) {
+                fetchData();
+            }
+        } catch (e) {
+            console.error("Split line failed", e);
+        }
+    };
+
     const value = {
         data, setData,
         isLoading, setIsLoading,
@@ -513,9 +667,14 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
         nextSearch, prevSearch,
         errorPopupData, setErrorPopupData,
         nushaIndex, setNushaIndex,
+        baseNushaIndex, updateBaseNusha,
         splitRatio, setSplitRatio,
         updateLineText,
         deleteLine,
+        mergeLines,
+        splitLine,
+        siglas, updateSigla,
+        footnotes, addFootnote, deleteFootnote, updateFootnote
     };
 
     return (

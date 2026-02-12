@@ -51,7 +51,7 @@ export default function ProjectsPage() {
     const [modalDpiSelections, setModalDpiSelections] = useState<Record<number, number>>({});
 
     const [formData, setFormData] = useState({
-        name: "", authors: "", language: "Ottoman Turkish", subject: "Islamic Studies", description: ""
+        name: "", authors: "", language: "", subject: "", description: ""
     });
 
     const router = useRouter();
@@ -233,7 +233,7 @@ export default function ProjectsPage() {
     // ======== PROJECT CRUD ========
     const openCreateModal = () => {
         setEditingProject(null);
-        setFormData({ name: "", authors: "", language: "Ottoman Turkish", subject: "Islamic Studies", description: "" });
+        setFormData({ name: "", authors: "", language: "", subject: "", description: "" });
         setModalNushaNames({});
         setModalNushaOrder([]);
         setModalDpiSelections({});
@@ -419,19 +419,26 @@ export default function ProjectsPage() {
         const isProjectProcessing = processing?.startsWith(`${p.id}-`);
 
         return (
-            <div key={p.id}
+            <Link key={p.id} href={`/projects/${p.id}/process`}
                 draggable={!isTrashed && sortMode === "manual"}
-                onDragStart={() => !isTrashed && handleDragStart(idx)}
+                onDragStart={(e) => {
+                    if (!isTrashed) handleDragStart(idx);
+                }}
                 onDragOver={(e) => !isTrashed && handleDragOver(e, idx)}
-                onDrop={() => !isTrashed && handleDrop(idx)}
+                onDrop={(e) => {
+                    e.preventDefault();
+                    if (!isTrashed) handleDrop(idx);
+                }}
                 onDragEnd={handleDragEnd}
-                className={`px-4 py-3 group hover:bg-purple-50/40 transition-colors ${idx !== list.length - 1 ? 'border-b border-slate-100' : ''
+                className={`block px-4 py-3 group hover:bg-purple-50/40 transition-colors ${idx !== list.length - 1 ? 'border-b border-slate-100' : ''
                     } ${!isTrashed && dragIdx === idx ? 'opacity-40' : ''} ${!isTrashed && dragOverIdx === idx && dragIdx !== idx ? 'border-t-2 border-purple-400' : ''}`}
             >
                 {/* Row 1: Project info + actions */}
                 <div className="flex items-center gap-3">
                     {!isTrashed && (
-                        <div className={`shrink-0 ${sortMode === 'manual' ? 'cursor-grab text-slate-300 hover:text-slate-500' : 'text-slate-100'}`}>
+                        <div className={`shrink-0 ${sortMode === 'manual' ? 'cursor-grab text-slate-300 hover:text-slate-500' : 'text-slate-100'}`}
+                            onClick={(e) => e.preventDefault()}
+                        >
                             <GripVertical size={14} />
                         </div>
                     )}
@@ -451,7 +458,7 @@ export default function ProjectsPage() {
                             <p className="text-[10px] text-slate-400 truncate">{p.authors.join(", ")}</p>
                         )}
                     </div>
-                    <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+                    <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end" onClick={(e) => e.preventDefault()}>
                         {isTrashed ? (
                             <>
                                 <button onClick={() => handleRestoreProject(p.id)} className="flex items-center gap-1 px-2.5 py-1.5 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 rounded-lg text-[10px] font-bold transition-colors"><RotateCcw size={11} /> Geri Al</button>
@@ -459,76 +466,13 @@ export default function ProjectsPage() {
                             </>
                         ) : (
                             <>
-                                <Link href={`/projects/${p.id}/editor`} className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-[10px] font-bold transition-colors"><PenTool size={11} /> Mukabele</Link>
-                                <Link href={`/projects/${p.id}/process`} className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 rounded-lg text-[10px] font-bold transition-colors"><Monitor size={11} /> Detaylı Analiz</Link>
-                                <button onClick={() => openEditModal(p)} className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-lg text-[10px] font-bold transition-colors"><Edit3 size={11} /> Düzenle</button>
+                                <button onClick={(e) => { e.preventDefault(); openEditModal(p); }} className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-lg text-[10px] font-bold transition-colors"><Edit3 size={11} /> Düzenle</button>
                                 <button onClick={(e) => handleTrashProject(p.id, e)} className="flex items-center gap-1 px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg text-[10px] font-bold transition-colors"><Trash size={11} /> Sil</button>
                             </>
                         )}
                     </div>
                 </div>
-
-                {/* Row 2: Nüsha cards — only for active projects */}
-                {!isTrashed && nushas.length > 0 && (
-                    <div className="mt-2.5 ml-10 mr-2">
-                        <div className="bg-slate-50/80 rounded-lg border border-slate-100 p-2 space-y-1.5">
-                            {nushas.sort((a: any, b: any) => (a.name || `Nüsha ${a.id}`).localeCompare(b.name || `Nüsha ${b.id}`, 'tr')).map((nusha: any) => {
-                                const isSelected = selectedNushas[p.id]?.has(nusha.id) || false;
-                                const isThisProcessing = processing === `${p.id}-full-${nusha.id}`;
-                                const currentDpi = dpiSelections[p.id]?.[nusha.id] || 300;
-
-                                return (
-                                    <div key={nusha.id} className={`flex items-center gap-2.5 bg-white rounded-md border px-3 py-1.5 transition-all ${isThisProcessing ? 'border-blue-300 bg-blue-50/50 shadow-sm'
-                                        : isSelected ? 'border-green-300 bg-green-50/30'
-                                            : 'border-slate-200 hover:border-slate-300'}`}
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={isSelected}
-                                            onChange={() => toggleNushaSelection(p.id, nusha.id)}
-                                            disabled={isThisProcessing}
-                                            className="w-3.5 h-3.5 rounded border-slate-300 text-green-600 focus:ring-green-500 cursor-pointer accent-green-600 shrink-0"
-                                        />
-                                        <div className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold shrink-0 ${nusha.uploaded ? 'bg-purple-100 text-purple-700' : 'bg-slate-200 text-slate-400'}`}>{nusha.id}</div>
-                                        <span className={`text-[11px] font-semibold flex-1 min-w-0 truncate ${isThisProcessing ? 'text-blue-600' : 'text-slate-700'}`}>
-                                            {nusha.name || `Nüsha ${nusha.id}`}
-                                        </span>
-                                        <select
-                                            className="bg-slate-50 border border-slate-200 text-[9px] text-slate-500 rounded px-1.5 py-0.5 outline-none cursor-pointer hover:border-blue-300 font-medium w-[52px] shrink-0"
-                                            value={currentDpi}
-                                            onChange={(e) => setDpiSelections(prev => ({
-                                                ...prev, [p.id]: { ...(prev[p.id] || {}), [nusha.id]: Number(e.target.value) }
-                                            }))}
-                                        >
-                                            <option value={200}>200</option>
-                                            <option value={300}>300</option>
-                                            <option value={400}>400</option>
-                                        </select>
-                                        {getNushaStatusBadge(nusha)}
-                                        {isThisProcessing && <RefreshCw className="animate-spin text-blue-500 shrink-0" size={10} />}
-                                    </div>
-                                );
-                            })}
-
-                            {/* Analyze button at the bottom of nüsha list */}
-                            <button
-                                onClick={() => runSelectedAnalysis(p.id)}
-                                disabled={!status?.has_tahkik || selectedCount === 0 || !!isProjectProcessing}
-                                className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-[11px] font-bold transition-all mt-1 ${isProjectProcessing
-                                    ? 'bg-green-100 text-green-700 border border-green-300 cursor-wait'
-                                    : !status?.has_tahkik || selectedCount === 0
-                                        ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
-                                        : 'bg-green-600 hover:bg-green-700 text-white shadow-sm'
-                                    }`}
-                                title={!status?.has_tahkik ? 'Önce Word yükleyin' : selectedCount === 0 ? 'Analiz edilecek nüsha seçin' : `${selectedCount} nüshayı sırayla analiz et`}
-                            >
-                                {isProjectProcessing ? <RefreshCw className="animate-spin" size={12} /> : <Play size={12} fill="currentColor" />}
-                                {isProjectProcessing ? 'Analiz Devam Ediyor...' : selectedCount > 0 ? `Seçilileri Analiz Et (${selectedCount})` : 'Analiz için nüsha seçin'}
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </div>
+            </Link>
         );
     };
 
@@ -673,105 +617,7 @@ export default function ProjectsPage() {
                                     <div><label className="block text-xs font-bold text-slate-600 mb-1">Açıklama</label><textarea className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition-all h-16 resize-none" placeholder="Kısa bilgi..." value={formData.description} onChange={e => setFormData({ ...formData, description: e.target.value })} /></div>
                                 </div>
 
-                                {/* Section 2: Word File (only in edit mode) */}
-                                {editingProject && (
-                                    <div className="bg-indigo-50/50 rounded-lg p-4 space-y-2">
-                                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
-                                            <BookOpen size={12} className="text-indigo-500" /> Referans Metin (Word)
-                                        </h3>
-                                        <div className="flex items-center justify-between">
-                                            <div className="flex items-center gap-2">
-                                                {projectStatuses[editingProject.id]?.has_tahkik
-                                                    ? <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-lg font-bold flex items-center gap-0.5"><CheckCircle size={10} /> Yüklendi</span>
-                                                    : <span className="text-[10px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded-lg font-bold flex items-center gap-0.5"><AlertCircle size={10} /> Bekleniyor</span>
-                                                }
-                                            </div>
-                                            <label className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-all ${projectStatuses[editingProject.id]?.has_tahkik
-                                                ? 'bg-white border border-slate-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-600'
-                                                : 'bg-indigo-600 text-white hover:bg-indigo-700'
-                                                }`}>
-                                                {uploading === `modal-docx` ? <RefreshCw className="animate-spin" size={12} /> : <UploadCloud size={12} />}
-                                                {projectStatuses[editingProject.id]?.has_tahkik ? "Güncelle" : "Word Yükle"}
-                                                <input type="file" className="hidden" accept=".docx" onChange={(e) => handleUpload(editingProject.id, e.target.files, 'docx', 1, 'modal-docx')} />
-                                            </label>
-                                        </div>
-                                    </div>
-                                )}
 
-                                {/* Section 3: Nüshalar (only in edit mode) */}
-                                {editingProject && (
-                                    <div className="bg-purple-50/50 rounded-lg p-4 space-y-3">
-                                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
-                                            <FileText size={12} className="text-purple-500" /> Nüshalar
-                                        </h3>
-
-                                        {(() => {
-                                            const nushas = getNushas(editingProject.id);
-                                            const order = modalNushaOrder.length > 0 ? modalNushaOrder : nushas.map((n: any) => n.id).sort((a: number, b: number) => a - b);
-
-                                            return (
-                                                <>
-                                                    {nushas.length === 0 ? (
-                                                        <p className="text-xs text-slate-400 italic">Henüz nüsha yüklenmedi.</p>
-                                                    ) : (
-                                                        <div className="space-y-1.5">
-                                                            {order.map((nushaId: number) => {
-                                                                const nusha = nushas.find((n: any) => n.id === nushaId);
-                                                                if (!nusha) return null;
-
-                                                                return (
-                                                                    <div
-                                                                        key={nusha.id}
-                                                                        draggable
-                                                                        onDragStart={() => setModalNushaDrag({ dragId: nusha.id })}
-                                                                        onDragOver={(e) => handleModalNushaDragOver(e, nusha.id)}
-                                                                        onDragEnd={() => setModalNushaDrag(null)}
-                                                                        className={`bg-white border border-slate-200 rounded-lg p-2.5 flex items-center gap-3 ${modalNushaDrag?.dragId === nusha.id ? 'opacity-50 ring-2 ring-purple-300' : ''}`}
-                                                                    >
-                                                                        <div className="text-slate-300 cursor-grab active:cursor-grabbing hover:text-slate-500 shrink-0"><GripVertical size={14} /></div>
-                                                                        <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 ${nusha.uploaded ? 'bg-purple-100 text-purple-700' : 'bg-slate-200 text-slate-400'}`}>{nusha.id}</div>
-                                                                        <input
-                                                                            className="flex-1 text-xs border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-purple-400 focus:border-purple-400 outline-none min-w-0"
-                                                                            value={modalNushaNames[nusha.id] || nusha.name || `Nüsha ${nusha.id}`}
-                                                                            onChange={(e) => setModalNushaNames(prev => ({ ...prev, [nusha.id]: e.target.value }))}
-                                                                            placeholder="Nüsha adı..."
-                                                                        />
-                                                                        <select
-                                                                            className="bg-slate-50 border border-slate-200 text-[10px] text-slate-600 rounded px-1.5 py-1 outline-none cursor-pointer hover:border-blue-300 font-medium w-16 shrink-0"
-                                                                            value={modalDpiSelections[nusha.id] || 300}
-                                                                            onChange={(e) => setModalDpiSelections(prev => ({ ...prev, [nusha.id]: Number(e.target.value) }))}
-                                                                        >
-                                                                            <option value={200}>200 DPI</option>
-                                                                            <option value={300}>300 DPI</option>
-                                                                            <option value={400}>400 DPI</option>
-                                                                        </select>
-                                                                        {nusha.uploaded && (
-                                                                            <label className="text-[10px] text-blue-500 hover:text-blue-700 cursor-pointer shrink-0 flex items-center gap-0.5">
-                                                                                <RefreshCw size={9} /> Değiştir
-                                                                                <input type="file" className="hidden" accept=".pdf" onChange={(e) => handleUpload(editingProject.id, e.target.files, 'pdf', nusha.id, `modal-n${nusha.id}`)} />
-                                                                            </label>
-                                                                        )}
-                                                                        {nusha.filename && <span className="text-[9px] text-slate-400 truncate max-w-[80px] shrink-0" title={nusha.filename}>{nusha.filename}</span>}
-                                                                        {getNushaStatusBadge(nusha)}
-                                                                        <button onClick={() => deleteNusha(editingProject.id, nusha.id)} className="text-slate-300 hover:text-red-500 shrink-0 transition-colors" title="Sil"><Trash2 size={13} /></button>
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    )}
-
-                                                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-[10px] font-bold cursor-pointer transition-colors shadow-sm">
-                                                        {uploading === `modal-new` ? <RefreshCw className="animate-spin" size={12} /> : <UploadCloud size={12} />}
-                                                        Yeni Nüsha Ekle (PDF)
-                                                        <input type="file" className="hidden" accept=".pdf" multiple onChange={(e) => {
-                                                            handleUpload(editingProject.id, e.target.files, 'pdf', -1, 'modal-new');
-                                                        }} />
-                                                    </label>
-                                                </>
-                                            );
-                                        })()}
-                                    </div>
-                                )}
 
                                 {/* Submit */}
                                 <div className="flex gap-2 pt-1">

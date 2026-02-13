@@ -9,12 +9,14 @@ import gc
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from src.services.project_manager import ProjectManager
+from src.database import DatabaseManager
 from src.pdf_processor import pdf_to_page_pngs
 from src.kraken_processor import split_page_to_lines, load_line_records_ordered
 from src.ocr import ocr_lines_with_google_vision_api, load_ocr_lines_ordered
 from src.alignment import align_ocr_to_tahkik_segment_dp
 from src.keys import get_google_vision_api_key
 from src.config import BASE_DIR
+from src.utils import write_json_atomic
 
 # Kraken importlarını try-except içine al ki çökerse bile loglayabilelim
 try:
@@ -48,6 +50,7 @@ class ManuscriptEngine:
     def __init__(self, project_id: str):
         self.project_id = project_id
         self.pm = ProjectManager()
+        self.db = DatabaseManager() # DB Connection
         self.project_dir = self.pm.get_project_path(project_id)
         
         if not self.project_dir.exists():
@@ -385,6 +388,14 @@ class ManuscriptEngine:
             # Save to project-specific alignment.json
             with paths["alignment"].open("w", encoding="utf-8") as f:
                 json.dump(alignment_payload, f, ensure_ascii=False, indent=2)
+
+            # DB Sync (Dual-Write)
+            try:
+                lines = alignment_payload.get("aligned", [])
+                if lines:
+                    self.db.upsert_lines_batch(self.project_id, nusha_index, lines)
+            except Exception as e:
+                print(f"[WARN] DB Sync failed for alignment: {e}")
 
             elapsed = time.time() - start_time
             print(f"[ENGINE] Alignment finished in {elapsed:.2f}s. Saved to {paths['alignment']}")

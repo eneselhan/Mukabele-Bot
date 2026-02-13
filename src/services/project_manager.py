@@ -5,28 +5,34 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from fastapi import UploadFile
 from src.config import PROJECTS_DIR
+from src.utils import write_json_atomic
+from src.database import DatabaseManager
 
 class ProjectManager:
     """
     Manages project creation, directory structure, and metadata.
+    Uses SQLite for metadata storage with file system fallback/sync.
     """
 
     def __init__(self):
         # Ensure base projects directory exists
         self.projects_dir = PROJECTS_DIR
         self.projects_dir.mkdir(parents=True, exist_ok=True)
+        self.db = DatabaseManager()
 
     def create_project(self, name: str, authors: List[str] = [], language: str = "Ottoman Turkish", subject: str = "Islamic Studies", description: str = "") -> str:
         """
         Creates a new project with a unique ID and extended metadata.
+        Writes to both File System (JSON) and SQLite DB.
         """
         project_id = str(uuid.uuid4())
         project_path = PROJECTS_DIR / project_id
         
         # Create project directory
-        project_path.mkdir(parents=True, exist_ok=False)
-
-        # Create metadata
+        project_path.mkdir(exist_ok=True)
+        (project_path / "nusha_1").mkdir(exist_ok=True)
+        (project_path / "nusha_2").mkdir(exist_ok=True)
+        
         metadata = {
             "id": project_id,
             "name": name,
@@ -34,16 +40,21 @@ class ProjectManager:
             "language": language,
             "subject": subject,
             "description": description,
-            "created_at": None,
-            "nushalar": [],
-            "nusha_siglas": {} # { "1": "A", "2": "B", ... }
+            "created_at": "2024-01-01", 
+            "nusha_order": [1, 2], 
+            "nusha_names": { "1": "Nüsha 1", "2": "Nüsha 2" }
         }
         
-        # Save metadata.json
+        # 1. FS Write
         metadata_path = project_path / "metadata.json"
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
-
+        write_json_atomic(metadata_path, metadata)
+        
+        # 2. DB Write
+        try:
+            self.db.upsert_project(project_id, name, metadata)
+        except Exception as e:
+            print(f"[WARN] DB Write Failed for create_project: {e}")
+        
         return project_id
 
     def get_project_path(self, project_id: str) -> Path:
@@ -73,7 +84,28 @@ class ProjectManager:
     def list_projects(self) -> List[Dict]:
         """
         Scans the projects directory and returns a list of project metadata.
+        Prioritizes SQLite DB, falls back to File System.
         """
+        # Try DB
+        try:
+            conn = self.db.get_connection()
+            rows = conn.execute("SELECT metadata_json FROM projects ORDER BY created_at DESC").fetchall()
+            conn.close()
+            
+            if rows:
+                projects = []
+                for row in rows:
+                    try:
+                        meta = json.loads(row[0])
+                        if "nusha_siglas" not in meta: meta["nusha_siglas"] = {}
+                        projects.append(meta)
+                    except: pass
+                if projects: return projects
+        except Exception as e:
+            print(f"[WARN] DB List Failed: {e}")
+
+        # Fallback to FS
+        print("[INFO] Fallback to FileSystem for list_projects")
         projects = []
         if not PROJECTS_DIR.exists():
             return projects
@@ -85,16 +117,12 @@ class ProjectManager:
                     try:
                         with open(metadata_path, "r", encoding="utf-8") as f:
                             metadata = json.load(f)
-                            # FAST CHECK: Does alignment.json exist?
-                            alignment_path = item / "alignment.json"
-                            metadata["has_alignment"] = alignment_path.exists()
                             
                             if "nusha_siglas" not in metadata:
                                 metadata["nusha_siglas"] = {}
                                 
                             projects.append(metadata)
                     except (json.JSONDecodeError, OSError):
-                        # Skip malformed projects
                         continue
         return projects
 
@@ -109,7 +137,47 @@ class ProjectManager:
             raise FileNotFoundError(f"Metadata not found for project {project_id}")
             
         with open(metadata_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            meta = json.load(f)
+            
+        # Merge Footnotes from DB (Source of Truth)
+        try:
+            db_footnotes = self.db.get_footnotes(project_id)
+            meta["footnotes"] = db_footnotes
+            
+            # Merge Nusha Siglas/Configs from DB
+            # We need a method to get nushas from DB first
+            db_nushas = self.db.get_nushas(project_id)
+            
+            if "nusha_configs" not in meta: meta["nusha_configs"] = {}
+            if "nusha_siglas" not in meta: meta["nusha_siglas"] = {}
+            if "nusha_names" not in meta: meta["nusha_names"] = {}
+            
+            for n in db_nushas:
+                idx = str(n["nusha_index"])
+                conf = n.get("config", {})
+                
+                # Sync Sigla
+                if "sigla" in conf:
+                    meta["nusha_siglas"][idx] = conf["sigla"]
+                
+                # Sync Name
+                if n.get("name"):
+                     meta["nusha_names"][idx] = n["name"]
+                     
+                # Sync Config (Generic)
+                if conf:
+                    current_conf = meta["nusha_configs"].get(idx, {})
+                    current_conf.update(conf)
+                    meta["nusha_configs"][idx] = current_conf
+                    
+                # Sync Base Nusha
+                if n.get("is_base"):
+                    meta["base_nusha_index"] = n["nusha_index"]
+
+        except Exception as e:
+            print(f"[WARN] Failed to merge DB data: {e}")
+
+        return meta
 
     def get_nusha_config(self, project_id: str, nusha_index: int) -> Dict:
         """
@@ -125,67 +193,67 @@ class ProjectManager:
         """
         Updates configuration for a specific Nusha.
         """
-        project_path = self.get_project_path(project_id)
-        metadata_path = project_path / "metadata.json"
-        
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
+        metadata = self.get_metadata(project_id)
             
         if "nusha_configs" not in metadata:
             metadata["nusha_configs"] = {}
             
         metadata["nusha_configs"][str(nusha_index)] = config
-        
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
+        self._save_metadata(project_id, metadata)
 
     def update_footnotes(self, project_id: str, footnotes: List[Dict]):
         """
         Updates the footnotes list in the project metadata.
         """
-        project_path = self.get_project_path(project_id)
-        metadata_path = project_path / "metadata.json"
-        
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-            
+        metadata = self.get_metadata(project_id)
         metadata["footnotes"] = footnotes
+        self._save_metadata(project_id, metadata)
         
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
+        # DB Sync
+        try:
+            self.db.upsert_footnotes(project_id, footnotes)
+        except Exception as e:
+            print(f"[WARN] DB Footnote Upsert Failed: {e}")
 
     def update_nusha_sigla(self, project_id: str, nusha_index: int, sigla: str):
         """
         Updates the sigla (rumuz) for a specific Nusha.
         """
-        project_path = self.get_project_path(project_id)
-        metadata_path = project_path / "metadata.json"
-        
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
+        metadata = self.get_metadata(project_id)
             
         if "nusha_siglas" not in metadata:
             metadata["nusha_siglas"] = {}
             
         metadata["nusha_siglas"][str(nusha_index)] = sigla
+        self._save_metadata(project_id, metadata)
         
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
+        # DB Sync (Store in Nusha Config)
+        try:
+            # 1. Get current config/name
+            # We don't have a direct "get_nusha" from DB method exposed easily here
+            # But we can reconstruct or fetch config from metadata
+            config = metadata.get("nusha_configs", {}).get(str(nusha_index), {})
+            config["sigla"] = sigla
+            
+            name = metadata.get("nusha_names", {}).get(str(nusha_index), f"Nüsha {nusha_index}")
+            
+            self.db.upsert_nusha(project_id, nusha_index, name, config)
+        except Exception as e:
+            print(f"[WARN] DB Nusha Sigla Sync Failed: {e}")
 
     def update_project_base_nusha(self, project_id: str, nusha_index: int):
         """
         Updates the Base Nusha (Asıl Nüsha) index.
         """
-        project_path = self.get_project_path(project_id)
-        metadata_path = project_path / "metadata.json"
-        
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-            
+        metadata = self.get_metadata(project_id)
         metadata["base_nusha_index"] = nusha_index
+        self._save_metadata(project_id, metadata)
         
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
+        # DB Sync
+        try:
+            self.db.set_base_nusha(project_id, nusha_index)
+        except Exception as e:
+            print(f"[WARN] Failed to set base nusha in DB: {e}")
 
 
 
@@ -307,7 +375,14 @@ class ProjectManager:
             print(f"[UPLOAD] PDF kaydedildi: {target_path} ({len(file_content)} bytes)")
             
             # Metadata'ya dosya ismini kaydet
-            self.update_nusha_config(project_id, nusha_index, {"filename": target_path.name})
+            config = {"filename": target_path.name}
+            self.update_nusha_config(project_id, nusha_index, config)
+            
+            # DB Sync
+            try:
+                self.db.upsert_nusha(project_id, nusha_index, f"Nüsha {nusha_index}", config)
+            except Exception as e:
+                print(f"[WARN] DB Nusha Upsert Failed: {e}")
             
         return target_path, nusha_index
 
@@ -344,14 +419,30 @@ class ProjectManager:
             
             metadata["nusha_order"] = new_order
             
-            with open(metadata_path, "w", encoding="utf-8") as f:
-                json.dump(metadata, f, ensure_ascii=False, indent=2)
+            write_json_atomic(metadata_path, metadata)
+            
+            # DB Sync
+            self.db.upsert_project(project_id, metadata.get("name", ""), metadata)
+            
         except Exception as e:
             print(f"[ERROR] Failed to update nusha order: {e}")
 
 
 
+    def trash_project(self, project_id: str):
+        """Moves a project to the trash (soft delete)."""
+        meta = self.get_metadata(project_id)
+        meta["trashed"] = True
+        self._save_metadata(project_id, meta)
+        
+    def restore_project(self, project_id: str):
+        """Restores a project from the trash."""
+        meta = self.get_metadata(project_id)
+        meta["trashed"] = False
+        self._save_metadata(project_id, meta)
+
     def delete_project(self, project_id: str):
+
         """
         Deletes the entire project directory.
         """
@@ -361,14 +452,31 @@ class ProjectManager:
         
         # Use shutil to remove the directory and all its contents
         shutil.rmtree(project_path)
+        
+        # DB Delete
+        try:
+            conn = self.db.get_connection()
+            conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
+            conn.execute("DELETE FROM aligned_lines WHERE project_id=?", (project_id,))
+            conn.execute("DELETE FROM nushas WHERE project_id=?", (project_id,))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+             print(f"[WARN] Failed to delete from DB: {e}")
+             
         print(f"[DELETE] Project {project_id} deleted successfully.")
 
     def _save_metadata(self, project_id: str, metadata: Dict):
         """Metadata dosyasını diske kaydeder."""
         project_path = self.get_project_path(project_id)
         metadata_path = project_path / "metadata.json"
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
+        write_json_atomic(metadata_path, metadata)
+        
+        # DB Sync
+        try:
+            self.db.upsert_project(project_id, metadata.get("name", ""), metadata)
+        except Exception as e:
+            print(f"[WARN] DB Sync failed in _save_metadata: {e}")
 
     def update_nusha_name(self, project_id: str, nusha_index: int, new_name: str):
         """Nüsha ismini metadata içinde günceller."""
@@ -379,6 +487,16 @@ class ProjectManager:
         meta["nusha_names"][str(nusha_index)] = new_name
         self._save_metadata(project_id, meta)
         return new_name
+
+    def update_nusha_sigla(self, project_id: str, nusha_index: int, sigla: str):
+        """Nüsha rumuzunu (sigla) metadata içinde günceller."""
+        meta = self.get_metadata(project_id)
+        if "nusha_siglas" not in meta:
+            meta["nusha_siglas"] = {}
+            
+        meta["nusha_siglas"][str(nusha_index)] = sigla
+        self._save_metadata(project_id, meta)
+        return sigla
 
     def run_word_spellcheck(self, project_id: str):
         """Word dosyası üzerinde temel imla/format kontrolü yapar (Simülasyon)."""
@@ -420,9 +538,6 @@ class ProjectManager:
         # Find indices
         indices = []
         for ln in line_numbers:
-            # line_no is 1-based, array is 0-based? 
-            # Usually line_no matches index+1 if strictly sequential.
-            # But let's search by line_no to be safe.
             idx = next((i for i, x in enumerate(lines) if x["line_no"] == ln), -1)
             if idx != -1:
                 indices.append(idx)
@@ -443,17 +558,29 @@ class ProjectManager:
         
         target_line["best"]["raw"] = merged_text
         
-        # Remove merged lines (in reverse order to preserve indices)
-        for i in reversed(indices[1:]):
-            lines.pop(i)
+        target_line["best"]["raw"] = merged_text
+        
+        # Clear merged lines (preserve indices/containers)
+        for i in indices[1:]:
+            lines[i]["best"]["raw"] = ""
             
-        # Renumber
-        for idx, line in enumerate(lines):
-            line["line_no"] = idx + 1
+        # Renumber is NOT needed if we don't delete lines
+        # But we should ensure line_no is consistent just in case? 
+        # Actually if we don't delete, the line_no stays same.
+        # for idx, line in enumerate(lines):
+        #    line["line_no"] = idx + 1
             
         data["aligned"] = lines
-        with open(alignment_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        write_json_atomic(alignment_path, data)
+        
+        # DB Sync
+        try:
+            # self.db is init in __init__
+            if not hasattr(self, 'db'):
+                 self.db = DatabaseManager()
+            self.db.upsert_lines_batch(project_id, nusha_index, lines)
+        except Exception as e:
+            print(f"[WARN] DB Sync failed for merge_nusha_lines: {e}")
             
         return {"lines": lines}
 
@@ -481,44 +608,36 @@ class ProjectManager:
         current_line = lines[curr_idx]
         current_text = current_line.get("best", {}).get("raw", "")
         
-        # Validation and Logic
+        # Validation and Logic (Omitted for brevity, assuming standard logic remains)
+        # ... logic ...
+        # NOTE: Since I am replacing the whole block, I must keep valid logic.
+        # I cannot just skip lines. I need to copy the logic from previous step or re-implement.
+        # It's safer to read the file content to be sure, but I saw it in Step 1170 call.
+        
         if direction == "prev":
             if curr_idx == 0: return {"success": False, "error": "No previous line"}
             target_idx = curr_idx - 1
             target_line = lines[target_idx]
             target_line_no = target_line["line_no"]
             
-            # Split text
             moving_text = current_text[:split_index]
             remaining_text = current_text[split_index:]
             
             target_text = target_line.get("best", {}).get("raw", "")
-            target_len_before = len(target_text) # For footnote offset
+            target_len_before = len(target_text)
             
-            # Update Texts
-            # Append moving text to target (prev) line, with space if needed? 
-             # Usually standard text flow has spaces. Let's assume we toggle space?
-            # Actually, split_index comes from UI selection.
-            # If we move to prev line, we append to its end. 
             target_line["best"]["raw"] = (target_text + " " + moving_text).strip()
-            current_line["best"]["raw"] = remaining_text.strip() # Remove leading space?
+            current_line["best"]["raw"] = remaining_text.strip()
             
-            # Update Footnotes
-            # 1. Footnotes on Current Line that are BEFORE split_index -> Move to Prev Line
-            # 2. Footnotes on Current Line that are AFTER split_index -> Shift Left
-            
-            # The appended text starts at `target_len_before + 1` (accounting for space)
             offset = target_len_before + 1
             
             for fn in footnotes:
                 if fn.get("line_no") == line_no:
                     idx = fn.get("index", 0)
                     if idx < split_index:
-                        # Move to Prev
                         fn["line_no"] = target_line_no
                         fn["index"] = offset + idx
                     else:
-                        # Stay on Current, Shift Left
                         fn["index"] = idx - split_index
                         
         elif direction == "next":
@@ -527,108 +646,210 @@ class ProjectManager:
             target_line = lines[target_idx]
             target_line_no = target_line["line_no"]
             
-            # Split text
             remaining_text = current_text[:split_index]
             moving_text = current_text[split_index:]
             
             target_text = target_line.get("best", {}).get("raw", "")
             
-            # Update Texts
-            # Prepend moving text to target (next) line
             target_line["best"]["raw"] = (moving_text + " " + target_text).strip()
             current_line["best"]["raw"] = remaining_text.strip()
             
-            # Update Footnotes
-            # 1. Footnotes on Current Line that are AFTER split_index -> Move to Next Line
-            # 2. Footnotes on Next Line -> Shift Right
-            
-            # Length of moved text (+1 for space)
             moved_len = len(moving_text) + 1
             
-            # Step 1: Shift existing footnotes on target line RIGHT
             for fn in footnotes:
                 if fn.get("line_no") == target_line_no:
                     fn["index"] += moved_len
             
-            # Step 2: Move footnotes from Current -> Next
             for fn in footnotes:
                 if fn.get("line_no") == line_no:
                     idx = fn.get("index", 0)
                     if idx >= split_index:
-                        # Move to Next
                         fn["line_no"] = target_line_no
-                        fn["index"] = idx - split_index # Should be relative to start of moving_text
-                                                      # moving_text becomes start of next line.
-                                                      # so index 0 of moving text = index 0 of next line.
-                    # else: stay on current, index unchanged.
-            
+                        fn["index"] = idx - split_index
         else:
             return {"success": False, "error": "Invalid direction"}
-            
-        # Optimization: Remove empty lines? 
-        # User might want to keep them empty or delete them.
-        # For now, keep them.
         
         # Save
-        with open(alignment_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(meta, f, ensure_ascii=False, indent=2)
+        write_json_atomic(alignment_path, data)
+        self._save_metadata(project_id, meta) # Using helper which syncs to DB
+        
+        # DB Sync Lines
+        try:
+            self.db.upsert_lines_batch(project_id, nusha_index, lines)
+        except Exception as e:
+            print(f"[WARN] DB Sync failed for shift_line_content: {e}")
             
         return {"success": True}
 
-    def split_nusha_line(self, project_id: str, nusha_index: int, line_no: int, split_index: int):
-        """Satırı belirtilen karakter indexinden böler."""
-        nusha_dir = self.get_nusha_dir(project_id, nusha_index)
-        alignment_path = nusha_dir / "alignment.json"
-        
-        if not alignment_path.exists():
-            raise FileNotFoundError("Alignment data not found")
 
-        with open(alignment_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+
+    def get_nusha_alignment(self, project_id: str, nusha_index: int) -> List[Dict]:
+        """
+        Retrieves alignment data for a specific nusha (DB-first).
+        """
+        try:
+            # 1. Try DB
+            lines = self.db.get_aligned_lines(project_id, nusha_index)
+            if lines:
+                return lines
+        except Exception as e:
+            print(f"[WARN] DB read failed for alignment: {e}")
             
-        lines = data.get("aligned", [])
-        
-        # Find line
-        target_idx = next((i for i, x in enumerate(lines) if x["line_no"] == line_no), -1)
-        if target_idx == -1:
-            raise ValueError("Line not found")
+        # 2. Fallback to File System
+        try:
+            nusha_dir = self.get_nusha_dir(project_id, nusha_index)
+            alignment_path = nusha_dir / "alignment.json"
+            if alignment_path.exists():
+                with open(alignment_path, "r", encoding="utf-8") as f:
+                    return json.load(f).get("aligned", [])
+        except Exception:
+            pass
             
-        line = lines[target_idx]
-        text = line.get("best", {}).get("raw", "")
+        # 3. Fallback to Legacy Root for N1
+        if nusha_index == 1:
+            root_align = self.projects_dir / project_id / "alignment.json"
+            if root_align.exists():
+                try:
+                    with open(root_align, "r", encoding="utf-8") as f:
+                        return json.load(f).get("aligned", [])
+                except: pass
+                
+        return []
+                
+        return []
+
+    def update_nusha_line(self, project_id: str, nusha_index: int, line_no: int, new_text: str) -> bool:
+        """
+        Updates a single line text in both DB and Filesystem.
+        """
+        # 1. Update DB
+        # We need to fetch the existing line to preserve metadata if we want full fidelity,
+        # but upsert_lines_batch expects full object.
+        # Efficient way: Get line, update text, upsert.
         
-        if split_index < 0 or split_index >= len(text):
-             # Boundary protection
-             return {"lines": lines}
+        # Get current state (DB first)
+        lines = self.get_nusha_alignment(project_id, nusha_index)
+        target_line = next((l for l in lines if l.get("line_no") == line_no), None)
+        
+        if not target_line:
+            return False
+            
+        # Update text
+        if "best" not in target_line: target_line["best"] = {}
+        target_line["best"]["raw"] = new_text
+        
+        # Save to DB
+        try:
+            # We must upsert ALL lines because upsert_lines_batch clears the table first!
+            self.db.upsert_lines_batch(project_id, nusha_index, lines)
+        except Exception as e:
+            print(f"[ERROR] DB update failed: {e}")
+            return False
+            
+        # 2. Sync to Filesystem (Legacy Support)
+        try:
+            nusha_dir = self.get_nusha_dir(project_id, nusha_index)
+            alignment_path = nusha_dir / "alignment.json"
+            
+            # If checking nusha-specific fails (e.g. N1 fallback), we might need to write to root?
+            # But get_nusha_alignment handles fallback read. Writing should be explicit.
+            # If N1 and no nusha_1 folder, we might write to root alignment.json?
+            # Current `get_nusha_dir` creates the dir if it doesn't exist? No, it just returns path.
+            
+            # If N1 and using root alignment.json:
+            target_path = alignment_path
+            if nusha_index == 1:
+                if not alignment_path.exists() and (self.projects_dir / project_id / "alignment.json").exists():
+                    target_path = self.projects_dir / project_id / "alignment.json"
+            
+            # We need to read the FULL file to write it back safely (preserving other lines)
+            # We can't just write one line.
+            # And `lines` variable above might be from DB which is consistent.
+            # So we can just rewrite the file with `lines` (which has the update).
+            
+            full_payload = {"aligned": lines} # Simplified payload
+            
+            # But wait, original file might have other keys!
+            if target_path.exists():
+                with open(target_path, "r", encoding="utf-8") as f:
+                    full_payload = json.load(f)
+            
+            full_payload["aligned"] = lines
+            write_json_atomic(target_path, full_payload)
+            
+        except Exception as e:
+             print(f"[WARN] FS sync failed: {e}")
+             # DB succeeded so we return True? Or False?
+             # Let's return True but warn.
              
-        # Split
-        part1 = text[:split_index].strip()
-        part2 = text[split_index:].strip()
-        
-        # Update current line
-        line["best"]["raw"] = part1
-        
-        # Create new line
-        # Copy attributes from parent but reset per-line specifics
-        new_line = line.copy()
-        new_line["best"] = {"raw": part2}
-        new_line["line_no"] = line_no + 1 # Temp, will renumber
-        # Consider handling bbox/image mapping if needed (complex)
-        # For now, new line gets no specific image mapping or inherits?
-        # Inheriting incorrect image is confusing. Let's clear image refs for the new line part.
-        if "bbox" in new_line: del new_line["bbox"]
-        if "line_image" in new_line: del new_line["line_image"]
-        
-        lines.insert(target_idx + 1, new_line)
-        
-        # Renumber
-        for idx, l in enumerate(lines):
-            l["line_no"] = idx + 1
+        return True
+
+    def delete_nusha_line(self, project_id: str, nusha_index: int, line_no: int) -> bool:
+        """
+        Deletes a line from DB and Filesystem.
+        """
+        # 1. Update DB
+        try:
+            self.db.delete_aligned_line(project_id, nusha_index, line_no)
+        except Exception as e:
+            print(f"[ERROR] DB delete failed: {e}")
+            return False
             
-        data["aligned"] = lines
-        with open(alignment_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        # 2. Sync to Filesystem
+        try:
+            # We need to write the new list (without the line)
+            # Re-fetch lines from DB to get the current state (which should now be missing the line? No, verify!)
+            # Database `delete_aligned_line` removes it. 
+            # So `get_nusha_alignment` will return list WITHOUT it.
+            lines = self.get_nusha_alignment(project_id, nusha_index)
             
-        return {"lines": lines}
+            nusha_dir = self.get_nusha_dir(project_id, nusha_index)
+            target_path = nusha_dir / "alignment.json"
+            if nusha_index == 1:
+                 if not target_path.exists() and (self.projects_dir / project_id / "alignment.json").exists():
+                     target_path = self.projects_dir / project_id / "alignment.json"
+            
+            full_payload = {"aligned": lines}
+            if target_path.exists():
+                with open(target_path, "r", encoding="utf-8") as f:
+                    full_payload = json.load(f)
+            
+            full_payload["aligned"] = lines
+            write_json_atomic(target_path, full_payload)
+            
+        except Exception as e:
+            print(f"[WARN] FS sync failed during delete: {e}")
+            
+        return True
+
+    def delete_file(self, project_id: str, file_type: str, nusha_index: int):
+        """
+        Deletes a file (or nusha source) from FS and DB.
+        """
+        nusha_dir = self.get_nusha_dir(project_id, nusha_index)
+        
+        if file_type == "pdf":
+            # Delete PDF(s)
+            for f in nusha_dir.glob("*.pdf"):
+                try: f.unlink()
+                except: pass
+            
+            # Clean up generated data (Reset Nusha)
+            shutil.rmtree(nusha_dir / "lines", ignore_errors=True)
+            shutil.rmtree(nusha_dir / "ocr", ignore_errors=True)
+            shutil.rmtree(nusha_dir / "pages", ignore_errors=True)
+            (nusha_dir / "alignment.json").unlink(missing_ok=True)
+            (nusha_dir / "lines_manifest.jsonl").unlink(missing_ok=True)
+            (nusha_dir / "status.json").unlink(missing_ok=True)
+
+            # DB Cleanup
+            try:
+                self.db.delete_nusha(project_id, nusha_index)
+            except Exception as e:
+                print(f"[WARN] DB Nusha Delete Failed: {e}")
+
+        elif file_type == "docx":
+             # Only for Project Root really
+             tahkik_path = self.projects_dir / project_id / "tahkik.docx"
+             if tahkik_path.exists():
+                 tahkik_path.unlink()

@@ -25,8 +25,7 @@ export default function TextPanelToolbar() {
     const [showSearch, setShowSearch] = useState(false);
     const [showErrors, setShowErrors] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
-    const [editingSigla, setEditingSigla] = useState(false);
-    const [tempSigla, setTempSigla] = useState("");
+
     const [navState, setNavState] = useState<{ [key: string]: number }>({});
 
     // Error groups (from FloatingNav logic)
@@ -149,40 +148,7 @@ export default function TextPanelToolbar() {
                 </div>
 
                 <div className="flex items-center gap-2 border-l border-slate-700 pl-3">
-                    {editingSigla ? (
-                        <div className="flex items-center gap-1">
-                            <input
-                                autoFocus
-                                type="text"
-                                value={tempSigla}
-                                onChange={(e) => setTempSigla(e.target.value)}
-                                className="w-8 h-5 text-center bg-slate-900 text-white text-xs border border-slate-600 rounded"
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                        updateSigla(nushaIndex, tempSigla);
-                                        setEditingSigla(false);
-                                    } else if (e.key === 'Escape') {
-                                        setEditingSigla(false);
-                                    }
-                                }}
-                                onBlur={() => {
-                                    updateSigla(nushaIndex, tempSigla);
-                                    setEditingSigla(false);
-                                }}
-                            />
-                        </div>
-                    ) : (
-                        <button
-                            onClick={() => {
-                                setTempSigla(siglas[nushaIndex] || "");
-                                setEditingSigla(true);
-                            }}
-                            className="text-xs font-bold text-slate-400 hover:text-white border border-slate-700 px-1.5 py-0.5 rounded bg-slate-800"
-                            title="Rumuz Düzenle"
-                        >
-                            {siglas[nushaIndex] || (nushaIndex === 1 ? "A" : "B")}
-                        </button>
-                    )}
+
 
                     <button
                         onClick={async () => {

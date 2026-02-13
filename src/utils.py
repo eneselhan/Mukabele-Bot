@@ -87,5 +87,44 @@ def check_spellcheck_exist() -> Tuple[bool, Optional[Path]]:
 def check_alignment_exist() -> Tuple[bool, Optional[Path]]:
     """Alignment JSON dosyası var mı kontrol et"""
     exists = ALIGNMENT_JSON.exists()
-    return exists, ALIGNMENT_JSON if exists else None
+
+# =========================
+# ATOMIC FILE OPERATIONS
+# =========================
+import json
+import os
+import shutil
+import tempfile
+
+def write_json_atomic(path: Path, data: dict, indent: int = 2):
+    """
+    Writes JSON data to a file atomically.
+    1. Writes to a temp file.
+    2. Flushes and syncs to disk.
+    3. Renames temp file to target path (atomic operation).
+    """
+    # Ensure parent dir exists
+    path.parent.mkdir(parents=True, exist_ok=True)
+    
+    dir_name = path.parent
+    base_name = path.name
+    
+    # Create temp file in the same directory to ensure atomic rename works
+    # (os.rename might fail across different filesystems)
+    fd, temp_path = tempfile.mkstemp(dir=dir_name, prefix=f".{base_name}_", suffix=".tmp")
+    
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=indent)
+            f.flush()
+            os.fsync(f.fileno()) # Force write to disk
+            
+        # Atomic rename
+        os.replace(temp_path, path)
+        
+    except Exception as e:
+        # Cleanup temp file if failed
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise e
 

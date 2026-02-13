@@ -28,6 +28,7 @@ const PageLayer = React.memo(({
 }: PageLayerProps) => {
     const [imgLoaded, setImgLoaded] = useState(false);
     const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
+    const { mergeLines, lines: allLines } = useMukabele();
     const imgRef = useRef<HTMLImageElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const activeBoxRef = useRef<SVGRectElement>(null);
@@ -133,9 +134,11 @@ const PageLayer = React.memo(({
                     </defs>
 
                     {/* Clickable line rects */}
-                    {page.lines.map(line => {
+                    {page.lines.map((line, idx) => {
                         if (!line.bbox) return null;
                         const [x0, y0, x1, y1] = line.bbox;
+                        const isFirstOfPage = idx === 0;
+
                         return (
                             <g key={line.line_no}>
                                 <rect
@@ -150,6 +153,7 @@ const PageLayer = React.memo(({
                                 >
                                     <title>Satır {line.line_no}</title>
                                 </rect>
+
                                 <text
                                     x={x1} y={y1 - ((y1 - y0) * 0.15)}
                                     textAnchor="end"

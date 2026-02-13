@@ -200,7 +200,7 @@ def get_project(project_id: str):
 
 @app.delete("/api/projects/{project_id}")
 def delete_project(project_id: str):
-    """Permanently deletes a project from disk."""
+    """Permanently deletes a project from disk and DB."""
     try:
         project_manager.delete_project(project_id)
         return {"status": "success", "message": f"Project {project_id} permanently deleted."}
@@ -209,9 +209,23 @@ def delete_project(project_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-        with open(project_path / "metadata.json", "w", encoding="utf-8") as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
+@app.post("/api/projects/{project_id}/trash")
+def trash_project(project_id: str):
+    """Moves a project to the trash."""
+    try:
+        project_manager.trash_project(project_id)
         return {"status": "success", "message": "Proje çöp kutusuna taşındı."}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/projects/{project_id}/restore")
+def restore_project(project_id: str):
+    """Restores a project from the trash."""
+    try:
+        project_manager.restore_project(project_id)
+        return {"status": "success", "message": "Proje geri yüklendi."}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Proje bulunamadı")
     except Exception as e:
@@ -230,22 +244,37 @@ from docx.oxml import parse_xml
 from docx.oxml.xmlchemy import serialize_for_reading
 
 def get_or_create_footnotes_part(doc_part):
+    # Safe access to footnotes_part
+    part = getattr(doc_part, 'footnotes_part', None)
+    if part is not None:
+        return part
+    
+    # Check relationships manually
+    rel_type = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes"
     try:
-        return doc_part.footnotes_part
-    except AttributeError:
-        # Check if relationship already exists
-        # doc_part.rels is a Relationships object
-        # It's iterable of Relationship
-        # But wait, python-docx Relationships object iteration?
-        # It behaves like a dict of rId -> rel usually. or values.
+        rels = doc_part.rels
+        found_rel = None
         
-        rel_type = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes"
-        
-        for rel in doc_part.rels.values():
-            if rel.reltype == rel_type:
-                return rel.target_part
+        if hasattr(rels, 'values'):
+            for rel in rels.values():
+                if rel.reltype == rel_type:
+                    found_rel = rel
+                    break
+        elif hasattr(rels, 'items'):
+             for rel_id, rel in rels.items():
+                if rel.reltype == rel_type:
+                    found_rel = rel
+                    break
+                    
+        if found_rel:
+            return found_rel.target_part
+            
+    except Exception as e:
+        print(f"[DEBUG] Error checking relationships: {e}")
+        # Proceed to creation if check fails
 
-        # Create Footnotes Part
+    # Create Footnotes Part (if not returned above)
+    try:
         package = doc_part.package
         partname = package.next_partname("/word/footnotes%d.xml")
         ct = "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"
@@ -254,10 +283,16 @@ def get_or_create_footnotes_part(doc_part):
             b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             b'<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
             b'  <w:footnote w:id="-1" w:type="separator">'
-            b'    <w:p><w:r><w:separator/></w:r></w:p>'
+            b'    <w:p>'
+            b'      <w:pPr><w:jc w:val="right"/><w:bidi/></w:pPr>'
+            b'      <w:r><w:separator/></w:r>'
+            b'    </w:p>'
             b'  </w:footnote>'
             b'  <w:footnote w:id="0" w:type="continuationSeparator">'
-            b'    <w:p><w:r><w:continuationSeparator/></w:r></w:p>'
+            b'    <w:p>'
+            b'      <w:pPr><w:jc w:val="right"/><w:bidi/></w:pPr>'
+            b'      <w:r><w:continuationSeparator/></w:r>'
+            b'    </w:p>'
             b'  </w:footnote>'
             b'</w:footnotes>'
         )
@@ -276,6 +311,9 @@ def get_or_create_footnotes_part(doc_part):
         doc_part.relate_to(new_part, rel_type)
         
         return new_part
+    except Exception as e:
+        print(f"[ERROR] Failed to create footnotes part: {e}")
+        return None
 
 def add_footnote(run, text):
     """
@@ -325,6 +363,10 @@ def add_footnote(run, text):
     p_pr = OxmlElement('w:pPr')
     bidi = OxmlElement('w:bidi') # RTL Flag
     p_pr.append(bidi)
+    
+    jc = OxmlElement('w:jc')
+    jc.set(qn('w:val'), 'right')
+    p_pr.append(jc)
     
     # Style (FootnoteText)
     p_style = OxmlElement('w:pStyle')
@@ -435,7 +477,7 @@ def export_project_docx(project_id: str):
         # Add Content
         # Add Content (Single Continuous Paragraph)
         p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         p.paragraph_format.bidi = True # RTL Paragraph
 
         for line in aligned_lines:
@@ -561,20 +603,7 @@ def update_footnotes(project_id: str, req: UpdateFootnotesRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/projects/{project_id}/restore")
-def restore_project(project_id: str):
-    """Restores a trashed project."""
-    try:
-        metadata = project_manager.get_metadata(project_id)
-        metadata["trashed"] = False
-        project_path = project_manager.get_project_path(project_id)
-        with open(project_path / "metadata.json", "w", encoding="utf-8") as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
-        return {"status": "success", "message": "Proje geri yüklendi."}
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Proje bulunamadı")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
 
 class UpdateProjectRequest(BaseModel):
     name: Optional[str] = None
@@ -631,7 +660,7 @@ class UpdateBaseNushaRequest(BaseModel):
 def update_base_nusha(project_id: str, req: UpdateBaseNushaRequest):
     try:
         project_manager.update_project_base_nusha(project_id, req.nusha_index)
-        return {"status": "success", "base_nusha": req.nusha_index}
+        return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -800,6 +829,15 @@ def get_pipeline_status(project_id: str, nusha_index: int):
         # Step 4: Alignment
         alignment_path = nusha_dir / "alignment.json"
         alignment_completed = alignment_path.exists()
+        
+        # Fallback: Check DB if file missing
+        if not alignment_completed:
+            try:
+                # get_nusha_alignment checks DB first
+                lines = project_manager.get_nusha_alignment(project_id, nusha_index)
+                if lines and len(lines) > 0:
+                    alignment_completed = True
+            except: pass
         
         # Determine step statuses
         def get_step_status(completed, prerequisites_met):
@@ -1174,28 +1212,16 @@ def get_mukabele_data(project_id: str):
         except:
             pass
 
-        # Helper to load from nusha dir without failing
+        # Helper to load from nusha dir without failing (now uses DB first)
         def load_nusha(n_idx):
-            try:
-                p = project_manager.get_nusha_dir(project_id, n_idx) / "alignment.json"
-                if p.exists():
-                    with open(p, "r", encoding="utf-8") as f:
-                        return json.load(f).get("aligned", [])
-            except: pass
-            return []
+            return project_manager.get_nusha_alignment(project_id, n_idx)
 
         # Load N1 (Primary)
-        # Priority: Nusha 1 specific > Legacy root alignment.json
+        # Priority: DB -> Nusha 1 specific -> Legacy root alignment.json
         n1_data = load_nusha(1)
         if n1_data:
             final_data["aligned"] = n1_data
-        else:
-            # Fallback to legacy root alignment.json
-            root_align = project_manager.projects_dir / project_id / "alignment.json"
-            if root_align.exists():
-                 with open(root_align, "r", encoding="utf-8") as f:
-                     final_data["aligned"] = json.load(f).get("aligned", [])
-
+        
         # Load others
         final_data["aligned_alt"] = load_nusha(2)
         final_data["aligned_alt3"] = load_nusha(3)
@@ -1325,25 +1351,7 @@ def get_pages(project_id: str, nusha_index: int = 1):
 @app.post("/api/projects/{project_id}/lines/update")
 def update_line(project_id: str, req: UpdateLineRequest):
     try:
-        # Determine which file to update based on nusha_index
-        target_path = None
-        
-        # Try specific nusha folder first
-        nusha_path = project_manager.get_nusha_dir(project_id, req.nusha_index) / "alignment.json"
-        
-        if nusha_path.exists():
-            target_path = nusha_path
-        elif req.nusha_index == 1:
-            # Fallback for Nusha 1: check root alignment.json
-            root_path = project_manager.projects_dir / project_id / "alignment.json"
-            if root_path.exists():
-                target_path = root_path
-        
-        if not target_path:
-             print(f"[API] Update Error: Alignment file not found for Nusha {req.nusha_index}")
-             raise HTTPException(status_code=404, detail=f"Alignment data not found for Nusha {req.nusha_index}")
-
-        success = alignment_service.update_line(req.line_no, req.new_text, file_path=target_path)
+        success = project_manager.update_nusha_line(project_id, req.nusha_index, req.line_no, req.new_text)
         
         if success:
             return {"ok": True}
@@ -1362,21 +1370,7 @@ class DeleteLineRequest(BaseModel):
 @app.post("/api/projects/{project_id}/lines/delete")
 def delete_line(project_id: str, req: DeleteLineRequest):
     try:
-        # Determine which alignment file to modify
-        target_path = None
-        nusha_path = project_manager.get_nusha_dir(project_id, req.nusha_index) / "alignment.json"
-
-        if nusha_path.exists():
-            target_path = nusha_path
-        elif req.nusha_index == 1:
-            root_path = project_manager.projects_dir / project_id / "alignment.json"
-            if root_path.exists():
-                target_path = root_path
-
-        if not target_path:
-            raise HTTPException(status_code=404, detail=f"Alignment data not found for Nusha {req.nusha_index}")
-
-        success = alignment_service.delete_line(req.line_no, file_path=target_path)
+        success = project_manager.delete_nusha_line(project_id, req.nusha_index, req.line_no)
 
         if success:
             return {"ok": True}
@@ -1404,23 +1398,7 @@ def merge_lines(project_id: str, req: MergeLinesRequest):
         print(f"[API] Merge Lines Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-class SplitLineRequest(BaseModel):
-    nusha_index: int
-    line_no: int
-    split_index: int
 
-@app.post("/api/projects/{project_id}/lines/split")
-def split_line(project_id: str, req: SplitLineRequest):
-    try:
-        result = project_manager.split_nusha_line(project_id, req.nusha_index, req.line_no, req.split_index)
-        return {"ok": True, "lines": result.get("lines")}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        print(f"[API] Split Line Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/tts")
 def tts_generate(req: TTSRequest):

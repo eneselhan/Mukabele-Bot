@@ -40,6 +40,7 @@ export interface MukabeleData {
     has_alt4?: boolean;
     default_nusha?: number;
     nusha_siglas?: { [key: string]: string };
+    nusha_names?: { [key: string]: string };
     base_nusha_index?: number;
     footnotes?: Footnote[];
     // ... spellcheck data, etc.
@@ -100,7 +101,8 @@ interface MukabeleContextType {
     updateLineText: (lineNo: number, newText: string) => void;
     deleteLine: (lineNo: number) => Promise<boolean>;
     mergeLines: (nushaIndex: number, lineNumbers: number[]) => Promise<void>;
-    splitLine: (nushaIndex: number, lineNo: number, splitIndex: number) => Promise<void>;
+
+    setPages: (pages: PageData[]) => void;
 }
 
 export interface PageData {
@@ -397,10 +399,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
 
     // LOAD DATA FUNCTION
     const fetchData = useCallback(async () => {
-        const pathParts = window.location.pathname.split("/");
-        const pIdIndex = pathParts.indexOf("projects") + 1;
-        const pId = (pIdIndex > 0 && pIdIndex < pathParts.length) ? pathParts[pIdIndex] : null;
-
+        const pId = projectId;
         if (!pId) return;
 
         setIsLoading(true);
@@ -413,17 +412,17 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
             }
             const jsonData = await resData.json();
             setData(jsonData);
-            if (jsonData.nusha_siglas) {
-                setSiglas(jsonData.nusha_siglas);
-            } else {
-                // Initialize if missing
-                const initSiglas: any = {};
-                if (jsonData.aligned) initSiglas["1"] = "A";
-                if (jsonData.aligned_alt) initSiglas["2"] = "B";
-                if (jsonData.aligned_alt3) initSiglas["3"] = "C";
-                if (jsonData.aligned_alt4) initSiglas["4"] = "D";
-                setSiglas(initSiglas);
-            }
+            // Sigla Initialization
+            const serverSiglas = jsonData.nusha_siglas || {};
+            const finalSiglas: any = { ...serverSiglas };
+
+            // Fill defaults only if missing
+            if (!finalSiglas["1"] && jsonData.aligned) finalSiglas["1"] = "A";
+            if (!finalSiglas["2"] && jsonData.aligned_alt) finalSiglas["2"] = "B";
+            if (!finalSiglas["3"] && jsonData.aligned_alt3) finalSiglas["3"] = "C";
+            if (!finalSiglas["4"] && jsonData.aligned_alt4) finalSiglas["4"] = "D";
+
+            setSiglas(finalSiglas);
 
             if (jsonData.base_nusha_index) {
                 setBaseNushaIndex(jsonData.base_nusha_index);
@@ -489,7 +488,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
             console.error("Data load error:", err);
             setIsLoading(false);
         }
-    }, [nushaIndex]);
+    }, [projectId, nushaIndex]);
 
     useEffect(() => {
         fetchData();
@@ -636,21 +635,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
-    const splitLine = async (nushaIndex: number, lineNo: number, splitIndex: number) => {
-        if (!projectId) return;
-        try {
-            const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/lines/split`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nusha_index: nushaIndex, line_no: lineNo, split_index: splitIndex })
-            });
-            if (res.ok) {
-                fetchData();
-            }
-        } catch (e) {
-            console.error("Split line failed", e);
-        }
-    };
+
 
     const value = {
         data, setData,
@@ -672,9 +657,10 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
         updateLineText,
         deleteLine,
         mergeLines,
-        splitLine,
+
+        setPages,
         siglas, updateSigla,
-        footnotes, addFootnote, deleteFootnote, updateFootnote
+        footnotes, addFootnote, deleteFootnote, updateFootnote,
     };
 
     return (

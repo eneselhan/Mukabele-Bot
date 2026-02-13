@@ -20,6 +20,7 @@ function MukabeleContent() {
         isLoading, setIsLoading,
         lines, pages,
         nushaIndex, setNushaIndex,
+        siglas,
     } = useMukabele();
 
     useEffect(() => {
@@ -90,48 +91,38 @@ function MukabeleContent() {
 
                 {/* Center: Nüsha selector */}
                 <div className="flex items-center gap-1.5">
-                    <button
-                        onClick={() => setNushaIndex(1)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${nushaIndex === 1
-                            ? "bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/20"
-                            : "bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700"
-                            }`}
-                    >
-                        Nüsha 1
-                    </button>
-                    {data.has_alt && (
-                        <button
-                            onClick={() => setNushaIndex(2)}
-                            className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${nushaIndex === 2
-                                ? "bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/20"
-                                : "bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700"
-                                }`}
-                        >
-                            Nüsha 2
-                        </button>
-                    )}
-                    {data.has_alt3 && (
-                        <button
-                            onClick={() => setNushaIndex(3)}
-                            className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${nushaIndex === 3
-                                ? "bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/20"
-                                : "bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700"
-                                }`}
-                        >
-                            Nüsha 3
-                        </button>
-                    )}
-                    {data.has_alt4 && (
-                        <button
-                            onClick={() => setNushaIndex(4)}
-                            className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${nushaIndex === 4
-                                ? "bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/20"
-                                : "bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700"
-                                }`}
-                        >
-                            Nüsha 4
-                        </button>
-                    )}
+                    {[1, 2, 3, 4].map(idx => {
+                        // Check if nusha exists
+                        const hasNusha =
+                            idx === 1 ? true : // Nusha 1 always exists
+                                idx === 2 ? data.has_alt :
+                                    idx === 3 ? data.has_alt3 :
+                                        idx === 4 ? data.has_alt4 : false;
+
+                        if (!hasNusha) return null;
+
+                        const name = data.nusha_names?.[idx.toString()] || `Nüsha ${idx}`;
+                        const sigla = siglas[idx] || (idx === 1 ? "A" : idx === 2 ? "B" : idx === 3 ? "C" : "D"); // Fallback to letters if no sigla
+                        // Or maybe just show nothing if no sigla? Use requested format.
+                        // User: "projede o nüsha için belirlenen isim ve o nüshanın rumuzu yazmalı beraberce"
+                        // Display: "Name (Sigla)"
+
+                        return (
+                            <button
+                                key={idx}
+                                onClick={() => setNushaIndex(idx)}
+                                className={`px-3 py-1 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 ${nushaIndex === idx
+                                    ? "bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/20"
+                                    : "bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700"
+                                    }`}
+                            >
+                                <span>{name}</span>
+                                <span className={`text-[10px] font-bold opacity-80 ${nushaIndex === idx ? "text-slate-800" : "text-slate-500"}`}>
+                                    ({sigla})
+                                </span>
+                            </button>
+                        );
+                    })}
                 </div>
 
                 {/* Right: Progress bar + keyboard hint */}

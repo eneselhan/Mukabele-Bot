@@ -4,17 +4,23 @@ import React, { useEffect, useRef } from "react";
 import { useMukabele } from "./MukabeleContext";
 import LineItem from "./LineItem";
 import DocumentView from "./DocumentView";
-import TextPanelToolbar from "./TextPanelToolbar";
-import TextPanelFooter from "./TextPanelFooter";
+
+import { useParams } from "next/navigation";
 
 export default function LineList() {
+    const params = useParams();
+    const projectId = params.id as string;
     const {
         activeLine,
         setActiveLine,
         fontSize,
         pages,
         activePageKey,
-        viewMode
+        viewMode,
+        lines, // Global lines
+        refreshData,
+        nushaIndex,
+        mergeLines // Context method
     } = useMukabele();
 
     const listRef = useRef<HTMLDivElement>(null);
@@ -25,10 +31,72 @@ export default function LineList() {
         return page ? page.lines : [];
     }, [pages, activePageKey]);
 
+    // Handle Shift (Move Words)
+    const handleShift = async (lineNo: number, direction: "prev" | "next", splitIndex?: number) => {
+        if (!projectId) return;
+
+        // Find global index
+        const globalIdx = lines.findIndex(l => l.line_no === lineNo);
+        if (globalIdx === -1) return;
+
+        let targetLineNo = lineNo;
+        let apiDirection = direction;
+        let finalSplitIndex = splitIndex ?? 0;
+
+        // Logic Mapping
+        if (direction === "prev") {
+            // "Pull from Prev" -> Technically "Push from Prev to Next"
+            // We want to move last word of PrevLine to CurrentLine.
+            if (globalIdx === 0) return; // No prev line
+
+            const prevLine = lines[globalIdx - 1];
+            targetLineNo = prevLine.line_no;
+            apiDirection = "next"; // We push FROM prev TO current
+
+            // Calculate split index for last word of prev line
+            const txt = prevLine.best?.raw || "";
+            const lastSpace = txt.lastIndexOf(" ");
+            // If -1, whole text moves? Yes. split=0.
+            // If "A B", space at 1. split=2 ("B").
+            finalSplitIndex = lastSpace + 1;
+        }
+        else if (direction === "next") {
+            // "Push to Next" -> Pushing from Current to Next.
+            // splitIndex is provided by LineItem (start of moving part).
+            // Default apiDirection="next" is correct.
+            targetLineNo = lineNo;
+            apiDirection = "next";
+        }
+
+        try {
+            const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/lines/shift`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    nusha_index: nushaIndex,
+                    line_no: targetLineNo,
+                    direction: apiDirection,
+                    split_index: finalSplitIndex
+                })
+            });
+
+            if (res.ok) {
+                await refreshData();
+            } else {
+                const err = await res.json();
+                alert(`Hata: ${err.detail || "İşlem başarısız"}`);
+            }
+        } catch (e) {
+            console.error("Shift failed", e);
+            alert("Sunucu hatası");
+        }
+    };
+
     // Scroll active line into view
     useEffect(() => {
         if (activeLine === null || !listRef.current) return;
         const el = listRef.current.querySelector(`[data-line="${activeLine}"]`);
+
         if (el) {
             const rect = el.getBoundingClientRect();
             const containerRect = listRef.current.getBoundingClientRect();
@@ -44,9 +112,7 @@ export default function LineList() {
     }, [activeLine]);
 
     return (
-        <div className="flex flex-col h-full bg-slate-900 relative">
-            <TextPanelToolbar />
-
+        <div className="flex flex-col h-full bg-slate-50 relative">
             {viewMode === 'paper' ? (
                 <DocumentView />
             ) : (
@@ -69,13 +135,12 @@ export default function LineList() {
                                 isActive={line.line_no === activeLine}
                                 onSelect={() => line.line_no != null && setActiveLine(line.line_no)}
                                 fontSize={fontSize}
+                                onShift={(dir, split) => handleShift(line.line_no, dir, split)}
                             />
                         );
                     })}
                 </div>
             )}
-
-            <TextPanelFooter />
         </div>
     );
 }

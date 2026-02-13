@@ -53,18 +53,18 @@ export default function SplitPane({
     const rightWidth = `calc(${(1 - splitRatio) * 100}% - 3px)`;
 
     return (
-        <div ref={containerRef} className="flex flex-row h-full w-full overflow-hidden relative bg-slate-900">
+        <div ref={containerRef} className="flex flex-row h-full w-full overflow-hidden relative bg-slate-50">
             <div style={{ width: leftWidth }} className="h-full overflow-hidden">
                 {left}
             </div>
 
             {/* Splitter Handle */}
             <div
-                className={`w-[6px] h-full cursor-col-resize flex items-center justify-center transition-colors z-10 ${isDragging ? "bg-amber-500/30" : "bg-slate-800 hover:bg-slate-700"
+                className={`w-[6px] h-full cursor-col-resize flex items-center justify-center transition-colors z-10 ${isDragging ? "bg-amber-500/30" : "bg-slate-100 hover:bg-slate-200"
                     }`}
                 onMouseDown={handleMouseDown}
             >
-                <div className={`w-[2px] h-8 rounded-full transition-colors ${isDragging ? "bg-amber-500" : "bg-slate-600"}`} />
+                <div className={`w-[2px] h-8 rounded-full transition-colors ${isDragging ? "bg-amber-500" : "bg-slate-300"}`} />
             </div>
 
             <div style={{ width: rightWidth }} className="h-full overflow-hidden">

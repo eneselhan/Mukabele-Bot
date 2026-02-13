@@ -23,7 +23,8 @@ export default function DocumentView() {
         nushaIndex,
         updateFootnote,
         baseNushaIndex,
-        setPages
+        setPages,
+        refreshData
     } = useMukabele();
 
     const params = useParams();
@@ -604,167 +605,190 @@ export default function DocumentView() {
         return map;
     }, [footnotes]);
 
+    // Zoom Logic
+    const [scale, setScale] = useState(1);
+
+    useEffect(() => {
+        if (!containerRef.current) return;
+        const ro = new ResizeObserver(entries => {
+            for (const entry of entries) {
+                const w = entry.contentRect.width;
+                // Target width: 794px (A4 @ 96 DPI) + 64px padding (32px each side)
+                // Calculate scale to fit width minus padding
+                const targetScale = (w - 64) / 794;
+                setScale(Math.max(0.1, Math.min(targetScale, 3.0))); // Clamp
+            }
+        });
+        ro.observe(containerRef.current);
+        return () => ro.disconnect();
+    }, []);
+
     return (
-        <div ref={containerRef} className="flex-1 bg-slate-100 overflow-y-auto p-8 flex flex-col items-center gap-8 relative">
-            {selection && !menuOpen && renderMenu()}
-            {menuOpen && renderMenu()}
+        <div ref={containerRef} className="flex-1 bg-slate-100 overflow-y-auto overflow-x-hidden p-0 relative">
+            <div className="flex flex-col items-center w-full min-h-full py-8 gap-8">
+                {selection && !menuOpen && renderMenu()}
+                {menuOpen && renderMenu()}
 
-            {!paginatedPages.length && (
-                <div className="text-slate-400 text-center italic text-sm mt-10 select-none">
-                    Metin yükleniyor veya bulunamadı.
-                </div>
-            )}
-
-            {paginatedPages.map((page, pageIndex) => (
-                <div
-                    key={pageIndex}
-                    id={`page-${pageIndex}`}
-                    className="bg-white w-full min-h-[297mm] p-[20mm] text-slate-900 shadow-md relative flex flex-col"
-                    dir="rtl"
-                    style={{
-                        fontFamily: "'Amiri', 'Traditional Arabic', serif",
-                        fontSize: `${fontSize}px`,
-                        lineHeight: 2.0,
-                        textAlign: "justify",
-                        textAlignLast: "right"
-                    }}
-                >
-                    {/* Page Content */}
-                    <div className="flex-1">
-                        {page.lines.map((line) => {
-                            const isActive = activeLine === line.line_no;
-                            const lineFootnotes = footnotes.filter(f => f.line_no === line.line_no);
-
-                            // Render line content with interleaved footnotes
-                            const renderLineContent = () => {
-                                const rawText = line.best?.raw || "";
-                                const isHovered = hoveredLine === line.line_no;
-
-                                // Sort footnotes by index
-                                const sorted = [...lineFootnotes].sort((a, b) => a.index - b.index);
-
-                                const segments: React.ReactNode[] = [];
-                                let cursor = 0;
-                                let segmentKeyIndex = 0;
-
-                                sorted.forEach((fn, idx) => {
-                                    // Clamp index to text length
-                                    // Note: We might have multiple footnotes at same index
-                                    const safeIndex = Math.min(Math.max(0, fn.index), rawText.length);
-
-                                    // Text segment before marker
-                                    if (safeIndex > cursor) {
-                                        segments.push(
-                                            <span key={`seg-${segmentKeyIndex++}`}>{rawText.slice(cursor, safeIndex)}</span>
-                                        );
-                                    }
-
-                                    const fnNum = footnoteNumbers.get(fn.id) || 0;
-
-                                    // Marker
-                                    segments.push(
-                                        <span
-                                            key={`fn-${fn.id}`}
-                                            id={`fn-${fn.id}`}
-                                            className="footnote-marker select-none text-[0.6em] align-top text-purple-600 font-bold ml-0.5 cursor-pointer hover:bg-purple-100 rounded px-0.5"
-                                            title={`${siglas[fn.nusha_index] || (fn.nusha_index === 1 ? "A" : fn.nusha_index === 2 ? "B" : fn.nusha_index === 3 ? "C" : "D")}${fn.type === "variation" ? ":" : fn.type === "omission" ? "-" : "+"} ${fn.content}`}
-                                            contentEditable={false}
-                                            data-ignore="true"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                setEditingFootnote(fn);
-                                                setMenuInput(fn.content);
-                                                setMenuOpen(false);
-                                                setSelection(null);
-                                            }}
-                                        >
-                                            {`[${fnNum}]`}
-                                        </span>
-                                    );
-
-                                    cursor = safeIndex;
-                                });
-
-                                // Remaining text
-                                if (cursor < rawText.length) {
-                                    segments.push(
-                                        <span key={`seg-${segmentKeyIndex++}`}>{rawText.slice(cursor)}</span>
-                                    );
-                                }
-
-                                // Default to rawText if segments empty (no footnotes) and we need to just show text (but wrapped in segments for consistency)
-                                if (segments.length === 0 && rawText.length > 0) {
-                                    segments.push(<span key={`seg-${segmentKeyIndex++}`}>{rawText}</span>);
-                                }
-
-                                return (
-                                    <React.Fragment key={line.line_no}>
-                                        <span
-                                            data-line-no={line.line_no}
-                                            className={`relative group rounded px-0.5 transition-colors outline-none border-b border-transparent hover:border-slate-200 caret-black ${isActive ? "bg-amber-50 border-amber-300" : ""}`}
-                                            onMouseEnter={() => setHoveredLine(line.line_no)}
-                                            onMouseLeave={() => setHoveredLine(null)}
-                                            contentEditable
-                                            suppressContentEditableWarning
-                                            onFocus={() => setActiveLine(line.line_no)}
-                                            onClick={() => setActiveLine(line.line_no)}
-                                            onBlur={(e) => {
-                                                const clone = e.currentTarget.cloneNode(true) as HTMLElement;
-
-                                                // 1. Detect Missing Footnotes logic
-                                                const remainingMarkers = clone.querySelectorAll('.footnote-marker');
-                                                const remainingIds = new Set<string>();
-                                                remainingMarkers.forEach(m => {
-                                                    const id = m.id.replace('fn-', '');
-                                                    remainingIds.add(id);
-                                                    m.remove();
-                                                });
-
-                                                lineFootnotes.forEach(fn => {
-                                                    if (!remainingIds.has(fn.id)) deleteFootnote(fn.id);
-                                                });
-
-                                                // 2. Update Text
-                                                const newText = clone.textContent || "";
-                                                const oldText = line.best?.raw || "";
-                                                if (newText !== oldText) {
-                                                    updateLineText(line.line_no, newText);
-                                                }
-                                            }}
-                                        >
-                                            {segments}
-                                        </span>
-                                        {" "}
-                                    </React.Fragment>
-                                );
-                            };
-
-                            return renderLineContent();
-                        })}
-
+                {!paginatedPages.length && (
+                    <div className="text-slate-400 text-center italic text-sm mt-10 select-none">
+                        Metin yükleniyor veya bulunamadı.
                     </div>
+                )}
 
-                    {/* Page Footnotes */}
-                    {
-                        page.footnotes.length > 0 && (
-                            <div className="mt-auto border-t border-slate-300 pt-4 text-sm">
-                                <div className="space-y-1">
-                                    {page.footnotes.sort((a, b) => {
-                                        if (a.line_no !== b.line_no) return a.line_no - b.line_no;
-                                        return a.index - b.index;
-                                    }).map((fn, i) => {
-                                        const sigla = siglas[fn.nusha_index] || (fn.nusha_index === 1 ? "A" : fn.nusha_index === 2 ? "B" : fn.nusha_index === 3 ? "C" : "D");
-                                        let content = "";
-                                        if (fn.type === "variation") content = ` : ${fn.content}`;
-                                        if (fn.type === "omission") content = ` - ${fn.content}`;
-                                        if (fn.type === "addition") content = ` + ${fn.content}`;
+                {paginatedPages.map((page, pageIndex) => (
+                    <div
+                        key={pageIndex}
+                        style={{
+                            width: 794 * scale,
+                            height: 1123 * scale,
+                            position: "relative"
+                        }}
+                        className="transition-all duration-75 ease-out shadow-md" // shadow on wrapper
+                    >
+                        <div
+                            id={`page-${pageIndex}`}
+                            className="bg-white text-slate-900 absolute top-0 left-0 origin-top-left flex flex-col p-[20mm]"
+                            dir="rtl"
+                            style={{
+                                width: 794,
+                                height: 1123,
+                                transform: `scale(${scale})`,
+                                fontFamily: "'Amiri', 'Traditional Arabic', serif",
+                                fontSize: `${fontSize}px`,
+                                lineHeight: 2.0,
+                                textAlign: "justify",
+                                textAlignLast: "right"
+                            }}
+                        >
+                            {/* Page Content */}
+                            <div className="flex-1">
+                                {page.lines.map((line) => {
+                                    const isActive = activeLine === line.line_no;
+                                    const lineFootnotes = footnotes.filter(f => f.line_no === line.line_no);
 
-                                        const fnNum = footnoteNumbers.get(fn.id) || 0;
+                                    // Render line content with interleaved footnotes
+                                    const renderLineContent = () => {
+                                        const rawText = line.best?.raw || "";
+                                        const isHovered = hoveredLine === line.line_no;
+                                        const isBaseNusha = nushaIndex === baseNushaIndex; // Check if current view is Base
+
+                                        // Sort footnotes by index
+                                        const sorted = [...lineFootnotes].sort((a, b) => a.index - b.index);
+
+                                        const segments: React.ReactNode[] = [];
+                                        let cursor = 0;
+                                        let segmentKeyIndex = 0;
+
+                                        sorted.forEach((fn, idx) => {
+                                            // Clamp index
+                                            const safeIndex = Math.min(Math.max(0, fn.index), rawText.length);
+
+                                            // Text segment before marker
+                                            if (safeIndex > cursor) {
+                                                segments.push(
+                                                    <span key={`seg-${segmentKeyIndex++}`}>{rawText.slice(cursor, safeIndex)}</span>
+                                                );
+                                            }
+
+                                            const fnNum = footnoteNumbers.get(fn.id) || 0;
+
+                                            // Marker
+                                            segments.push(
+                                                <span
+                                                    key={`fn-${fn.id}`}
+                                                    id={`fn-${fn.id}`}
+                                                    className="footnote-marker select-none text-[0.6em] align-top text-purple-600 font-bold ml-0.5 cursor-pointer hover:bg-purple-100 rounded px-0.5"
+                                                    title={`${siglas[fn.nusha_index] || (fn.nusha_index === 1 ? "A" : fn.nusha_index === 2 ? "B" : fn.nusha_index === 3 ? "C" : "D")}${fn.type === "variation" ? ":" : fn.type === "omission" ? "-" : "+"} ${fn.content}`}
+                                                    contentEditable={false}
+                                                    data-ignore="true"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setEditingFootnote(fn);
+                                                        setMenuInput(fn.content);
+                                                        setMenuOpen(false);
+                                                        setSelection(null);
+                                                    }}
+                                                >
+                                                    {`[${fnNum}]`}
+                                                </span>
+                                            );
+
+                                            cursor = safeIndex;
+                                        });
+
+                                        // Remaining text
+                                        if (cursor < rawText.length) {
+                                            segments.push(
+                                                <span key={`seg-${segmentKeyIndex++}`}>{rawText.slice(cursor)}</span>
+                                            );
+                                        }
+
+                                        // Default to rawText if empty segments
+                                        if (segments.length === 0 && rawText.length > 0) {
+                                            segments.push(<span key={`seg-${segmentKeyIndex++}`}>{rawText}</span>);
+                                        }
 
                                         return (
-                                            <div key={fn.id} className="flex items-start gap-1 group leading-normal">
-                                                <span className="font-bold text-xs text-slate-500 w-6 text-left pt-1">
-                                                    {/* Global index or per page? Usually per page or continuous. Let's do simple index for now. 
+                                            <React.Fragment key={line.line_no}>
+                                                <span
+                                                    data-line-no={line.line_no}
+                                                    className={`inline rounded px-0.5 transition-colors outline-none border-b border-transparent hover:border-slate-200 caret-black ${isActive ? "bg-amber-50 border-amber-300" : ""}`}
+                                                    contentEditable
+                                                    suppressContentEditableWarning
+                                                    onFocus={() => setActiveLine(line.line_no)}
+                                                    onClick={() => setActiveLine(line.line_no)}
+                                                    onBlur={(e) => {
+                                                        const clone = e.currentTarget.cloneNode(true) as HTMLElement;
+                                                        const remainingMarkers = clone.querySelectorAll('.footnote-marker');
+                                                        const remainingIds = new Set<string>();
+                                                        remainingMarkers.forEach(m => {
+                                                            const id = m.id.replace('fn-', '');
+                                                            remainingIds.add(id);
+                                                            m.remove();
+                                                        });
+                                                        lineFootnotes.forEach(fn => {
+                                                            if (!remainingIds.has(fn.id)) deleteFootnote(fn.id);
+                                                        });
+                                                        const newText = clone.textContent || "";
+                                                        const oldText = line.best?.raw || "";
+                                                        if (newText !== oldText) {
+                                                            updateLineText(line.line_no, newText);
+                                                        }
+                                                    }}
+                                                >
+                                                    {segments}
+                                                </span>
+                                                {" "}
+                                            </React.Fragment>
+                                        );
+                                    };
+
+                                    return renderLineContent();
+                                })}
+
+                            </div>
+
+                            {/* Page Footnotes */}
+                            {
+                                page.footnotes.length > 0 && (
+                                    <div className="mt-auto border-t border-slate-300 pt-4 text-sm">
+                                        <div className="space-y-1">
+                                            {page.footnotes.sort((a, b) => {
+                                                if (a.line_no !== b.line_no) return a.line_no - b.line_no;
+                                                return a.index - b.index;
+                                            }).map((fn, i) => {
+                                                const sigla = siglas[fn.nusha_index] || (fn.nusha_index === 1 ? "A" : fn.nusha_index === 2 ? "B" : fn.nusha_index === 3 ? "C" : "D");
+                                                let content = "";
+                                                if (fn.type === "variation") content = ` : ${fn.content}`;
+                                                if (fn.type === "omission") content = ` - ${fn.content}`;
+                                                if (fn.type === "addition") content = ` + ${fn.content}`;
+
+                                                const fnNum = footnoteNumbers.get(fn.id) || 0;
+
+                                                return (
+                                                    <div key={fn.id} className="flex items-start gap-1 group leading-normal">
+                                                        <span className="font-bold text-xs text-slate-500 w-6 text-left pt-1">
+                                                            {/* Global index or per page? Usually per page or continuous. Let's do simple index for now. 
                                                     Actually, footnote markers in text were [1], [2] etc relative to line? 
                                                     No, the logic in text use `idx + 1` which is relative to line.
                                                     Here we might want to just show the content or a matching number.
@@ -772,84 +796,85 @@ export default function DocumentView() {
                                                     Standard academic usually is per-page continuous.
                                                     For now, let's just show the footnote content without a specific number matching the text one unless we calculate it.
                                                  */}
-                                                    {fnNum}
-                                                </span>
-                                                <span
-                                                    className="font-serif dir-rtl text-slate-800 cursor-pointer hover:bg-slate-50 rounded px-1 -mx-1"
-                                                    onClick={() => {
-                                                        setEditingFootnote(fn);
-                                                        setMenuInput(fn.content);
-                                                    }}
-                                                >
-                                                    <span className="font-bold text-amber-700">{sigla}</span>
-                                                    {content}
-                                                </span>
-                                                <button
-                                                    onClick={async () => {
-                                                        // 1. Visually remove immediately
-                                                        setPendingDeletes(prev => {
-                                                            const next = new Set(prev);
-                                                            next.add(fn.id);
-                                                            return next;
-                                                        });
+                                                            {fnNum}
+                                                        </span>
+                                                        <span
+                                                            className="font-serif dir-rtl text-slate-800 cursor-pointer hover:bg-slate-50 rounded px-1 -mx-1"
+                                                            onClick={() => {
+                                                                setEditingFootnote(fn);
+                                                                setMenuInput(fn.content);
+                                                            }}
+                                                        >
+                                                            <span className="font-bold text-amber-700">{sigla}</span>
+                                                            {content}
+                                                        </span>
+                                                        <button
+                                                            onClick={async () => {
+                                                                // 1. Visually remove immediately
+                                                                setPendingDeletes(prev => {
+                                                                    const next = new Set(prev);
+                                                                    next.add(fn.id);
+                                                                    return next;
+                                                                });
 
-                                                        // 2. Start delayed delete
-                                                        const timer = setTimeout(async () => {
-                                                            await deleteFootnote(fn.id);
-                                                            // Cleanup pending list (though it's gone from main list now)
-                                                            setPendingDeletes(prev => {
-                                                                const next = new Set(prev);
-                                                                next.delete(fn.id);
-                                                                return next;
-                                                            });
-                                                            setLastDeleted(prev => (prev?.fn.id === fn.id ? null : prev));
-                                                        }, 5000);
+                                                                // 2. Start delayed delete
+                                                                const timer = setTimeout(async () => {
+                                                                    await deleteFootnote(fn.id);
+                                                                    // Cleanup pending list (though it's gone from main list now)
+                                                                    setPendingDeletes(prev => {
+                                                                        const next = new Set(prev);
+                                                                        next.delete(fn.id);
+                                                                        return next;
+                                                                    });
+                                                                    setLastDeleted(prev => (prev?.fn.id === fn.id ? null : prev));
+                                                                }, 5000);
 
-                                                        // 3. Show undo toast
-                                                        setLastDeleted({ fn, timeoutId: timer });
-                                                        setCountdown(5);
-                                                    }}
-                                                    className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-red-500 transition-opacity ml-1"
-                                                >
-                                                    <Trash2 size={12} />
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        )
-                    }
-                </div>
-            ))}
+                                                                // 3. Show undo toast
+                                                                setLastDeleted({ fn, timeoutId: timer });
+                                                                setCountdown(5);
+                                                            }}
+                                                            className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-red-500 transition-opacity ml-1"
+                                                        >
+                                                            <Trash2 size={12} />
+                                                        </button>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )
+                            }
+                        </div>
+                    </div>
+                ))}
 
-            {/* Undo Toast */}
-            {lastDeleted && (
-                <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded shadow-lg flex items-center gap-3 animate-in slide-in-from-bottom-5 duration-200 z-50">
-                    <span className="text-sm">Dipnot silindi ({countdown} sn).</span>
-                    <button
-                        onClick={() => {
+                {/* Undo Toast */}
+                {lastDeleted && (
+                    <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded shadow-lg flex items-center gap-3 animate-in slide-in-from-bottom-5 duration-200 z-50">
+                        <span className="text-sm">Dipnot silindi ({countdown} sn).</span>
+                        <button
+                            onClick={() => {
+                                clearTimeout(lastDeleted.timeoutId);
+                                setPendingDeletes(prev => {
+                                    const next = new Set(prev);
+                                    next.delete(lastDeleted.fn.id);
+                                    return next;
+                                });
+                                setLastDeleted(null);
+                            }}
+                            className="text-amber-400 font-bold text-sm hover:underline"
+                        >
+                            Geri Al
+                        </button>
+                        <button onClick={() => {
                             clearTimeout(lastDeleted.timeoutId);
-                            setPendingDeletes(prev => {
-                                const next = new Set(prev);
-                                next.delete(lastDeleted.fn.id);
-                                return next;
-                            });
                             setLastDeleted(null);
-                        }}
-                        className="text-amber-400 font-bold text-sm hover:underline"
-                    >
-                        Geri Al
-                    </button>
-                    <button onClick={() => {
-                        clearTimeout(lastDeleted.timeoutId);
-                        setLastDeleted(null);
-                    }} className="opacity-50 hover:opacity-100 ml-2">
-                        <X size={14} />
-                    </button>
-                </div>
-            )}
-        </div >
+                        }} className="opacity-50 hover:opacity-100 ml-2">
+                            <X size={14} />
+                        </button>
+                    </div>
+                )}
+            </div>
+        </div>
     );
-
 }

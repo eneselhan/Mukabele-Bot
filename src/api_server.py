@@ -1383,6 +1383,31 @@ def delete_line(project_id: str, req: DeleteLineRequest):
         print(f"[API] Delete Line Exception: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/projects/{project_id}/lines/deleted")
+def get_deleted_lines(project_id: str, nusha_index: int = 1):
+    try:
+        lines = project_manager.get_deleted_lines(project_id, nusha_index)
+        return {"lines": lines}
+    except Exception as e:
+        print(f"[API] Get Deleted Lines Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class RestoreLineRequest(BaseModel):
+    line_no: int
+    nusha_index: int = 1
+
+@app.post("/api/projects/{project_id}/lines/restore")
+def restore_line(project_id: str, req: RestoreLineRequest):
+    try:
+        success = project_manager.restore_nusha_line(project_id, req.nusha_index, req.line_no)
+        if success:
+            return {"ok": True}
+        else:
+            raise HTTPException(status_code=404, detail="Line not found or restore failed")
+    except Exception as e:
+        print(f"[API] Restore Line Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 class MergeLinesRequest(BaseModel):
     nusha_index: int
     line_numbers: List[int]
@@ -1396,6 +1421,30 @@ def merge_lines(project_id: str, req: MergeLinesRequest):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         print(f"[API] Merge Lines Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ShiftLineRequest(BaseModel):
+    nusha_index: int
+    line_no: int
+    direction: str # "prev" or "next"
+    split_index: int # Index in the raw string to split at
+
+@app.post("/api/projects/{project_id}/lines/shift")
+def shift_line(project_id: str, req: ShiftLineRequest):
+    try:
+        result = project_manager.shift_line_content(
+            project_id, 
+            req.nusha_index, 
+            req.line_no, 
+            req.direction, 
+            req.split_index
+        )
+        if result.get("success"):
+            return {"ok": True}
+        else:
+            raise HTTPException(status_code=400, detail=result.get("error"))
+    except Exception as e:
+        print(f"[API] Shift Line Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1416,47 +1465,7 @@ def tts_generate(req: TTSRequest):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-class ShiftLineRequest(BaseModel):
-    line_no: int
-    direction: str # "prev" | "next"
-    split_index: int
-    nusha_index: int = 1
 
-@app.post("/api/projects/{project_id}/lines/shift")
-def shift_line_content(project_id: str, req: ShiftLineRequest):
-    try:
-        res = project_manager.shift_line_content(
-            project_id=project_id,
-            nusha_index=req.nusha_index,
-            line_no=req.line_no,
-            direction=req.direction,
-            split_index=req.split_index
-        )
-        if not res.get("success"):
-            raise HTTPException(status_code=400, detail=res.get("error"))
-        return res
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/projects/{project_id}/lines/shift")
-def shift_line_content(project_id: str, req: ShiftLineRequest):
-    try:
-        res = project_manager.shift_line_content(
-            project_id=project_id,
-            nusha_index=req.nusha_index,
-            line_no=req.line_no,
-            direction=req.direction,
-            split_index=req.split_index
-        )
-        if not res.get("success"):
-            raise HTTPException(status_code=400, detail=res.get("error"))
-        return res
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run("src.api_server:app", host="0.0.0.0", port=8000, reload=True)

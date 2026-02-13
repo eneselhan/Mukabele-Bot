@@ -77,11 +77,25 @@ class DatabaseManager:
                 meta_json TEXT, -- Stores bbox, confidences, detailed matches
                 
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_deleted BOOLEAN DEFAULT 0,
+                deleted_at TIMESTAMP,
                 
                 UNIQUE(project_id, nusha_index, line_no),
                 FOREIGN KEY(project_id) REFERENCES projects(id)
             )
         """)
+
+        # Migration: Check if 'is_deleted' exists, if not add it
+        try:
+            cursor.execute("SELECT is_deleted FROM aligned_lines LIMIT 1")
+        except sqlite3.OperationalError:
+            # Column missing, add it
+            logger.info("Migrating DB: Adding is_deleted to aligned_lines")
+            try:
+                cursor.execute("ALTER TABLE aligned_lines ADD COLUMN is_deleted BOOLEAN DEFAULT 0")
+                cursor.execute("ALTER TABLE aligned_lines ADD COLUMN deleted_at TIMESTAMP")
+            except Exception as e:
+                logger.error(f"Migration failed: {e}")
         
         # 4. Footnotes
         cursor.execute("""
@@ -296,23 +310,88 @@ class DatabaseManager:
         
         result = []
         for row in rows:
-            line_obj = json.loads(row["meta_json"]) if row["meta_json"] else {}
-            
-            # Re-inject primary fields
-            line_obj["line_no"] = row["line_no"]
-            line_obj["ocr_text"] = row["ocr_text"]
-            line_obj["line_image"] = row["image_path"]
-            
-            if "best" not in line_obj:
-                line_obj["best"] = {}
-            line_obj["best"]["raw"] = row["ref_text"]
-            
-            result.append(line_obj)
+             result.append(self._row_to_dict(row))
             
         conn.close()
         return result
 
+    def _row_to_dict(self, row: sqlite3.Row) -> Dict:
+        """
+        Helper to convert DB row to line object (expanding meta_json).
+        """
+        line_obj = json.loads(row["meta_json"]) if row["meta_json"] else {}
+        
+        # Re-inject primary fields
+        line_obj["line_no"] = row["line_no"]
+        line_obj["ocr_text"] = row["ocr_text"]
+        
+        # Handle new columns if present
+        if "is_deleted" in row.keys():
+             line_obj["is_deleted"] = bool(row["is_deleted"])
+        if "deleted_at" in row.keys():
+             line_obj["deleted_at"] = row["deleted_at"]
+
+        # Ensure image_path is correct relative path
+        if row["image_path"]:
+             line_obj["line_image"] = row["image_path"]
+        
+        if "best" not in line_obj:
+            line_obj["best"] = {}
+        line_obj["best"]["raw"] = row["ref_text"]
+        
+        return line_obj
+
+    def get_deleted_lines(self, project_id: str, nusha_index: int) -> List[Dict]:
+        """
+        Retrieves only soft-deleted lines.
+        """
+        conn = self.get_connection()
+        try:
+            cursor = conn.execute("""
+                SELECT * FROM aligned_lines 
+                WHERE project_id=? AND nusha_index=? AND is_deleted=1
+                ORDER BY deleted_at DESC, line_no ASC
+            """, (project_id, nusha_index))
+            
+            rows = cursor.fetchall()
+            return [self._row_to_dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def soft_delete_aligned_line(self, project_id: str, nusha_index: int, line_no: int):
+        """
+        Soft deletes a line by setting is_deleted=1.
+        """
+        conn = self.get_connection()
+        try:
+            conn.execute("""
+                UPDATE aligned_lines 
+                SET is_deleted=1, deleted_at=CURRENT_TIMESTAMP 
+                WHERE project_id=? AND nusha_index=? AND line_no=?
+            """, (project_id, nusha_index, line_no))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def restore_aligned_line(self, project_id: str, nusha_index: int, line_no: int):
+        """
+        Restores a line by setting is_deleted=0.
+        """
+        conn = self.get_connection()
+        try:
+            conn.execute("""
+                UPDATE aligned_lines 
+                SET is_deleted=0, deleted_at=NULL 
+                WHERE project_id=? AND nusha_index=? AND line_no=?
+            """, (project_id, nusha_index, line_no))
+            conn.commit()
+        finally:
+            conn.close()
+
     def delete_aligned_line(self, project_id: str, nusha_index: int, line_no: int):
+        """
+        Hard deletes a line (Legacy/Admin use).
+        """
         conn = self.get_connection()
         try:
             conn.execute("""

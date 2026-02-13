@@ -8,6 +8,8 @@ import SplitPane from "@/components/mukabele/SplitPane";
 import PageCanvas from "@/components/mukabele/PageCanvas";
 import LineList from "@/components/mukabele/LineList";
 import ImagePanelToolbar from "@/components/mukabele/ImagePanelToolbar";
+import ImagePanelFooter from "@/components/mukabele/ImagePanelFooter";
+import TextPanelToolbar from "@/components/mukabele/TextPanelToolbar";
 import ErrorPopup from "@/components/mukabele/ErrorPopup";
 import { ArrowLeft, BookOpen, Keyboard } from "lucide-react";
 
@@ -19,8 +21,8 @@ function MukabeleContent() {
         data, setData,
         isLoading, setIsLoading,
         lines, pages,
-        nushaIndex, setNushaIndex,
-        siglas,
+        // nushaIndex, setNushaIndex, // Moved to ImagePanelToolbar
+        // siglas,
     } = useMukabele();
 
     useEffect(() => {
@@ -69,67 +71,33 @@ function MukabeleContent() {
     }
 
     return (
-        <div className="flex flex-col h-screen overflow-hidden bg-slate-900">
+        <div className="flex flex-col h-screen overflow-hidden bg-slate-50">
             <ErrorPopup />
 
-            {/* ── Slim Dark Header ── */}
-            <header className="flex items-center justify-between px-4 bg-slate-950 border-b border-slate-800 z-20 h-[42px] shrink-0">
+            {/* ── Slim Light Header ── */}
+            <header className="flex items-center justify-between px-4 bg-white border-b border-slate-200 z-20 h-[42px] shrink-0 shadow-sm">
                 <div className="flex items-center gap-3">
                     <button
                         onClick={() => router.back()}
-                        className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                        className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
                         title="Projeye Dön"
                     >
                         <ArrowLeft size={18} />
                     </button>
-                    <div className="h-5 w-px bg-slate-700" />
-                    <h1 className="font-semibold text-slate-200 flex items-center gap-2 text-sm">
+                    <div className="h-5 w-px bg-slate-200" />
+                    <h1 className="font-semibold text-slate-700 flex items-center gap-2 text-sm">
                         <BookOpen size={16} className="text-amber-500" />
                         Mukabele
                     </h1>
                 </div>
 
-                {/* Center: Nüsha selector */}
-                <div className="flex items-center gap-1.5">
-                    {[1, 2, 3, 4].map(idx => {
-                        // Check if nusha exists
-                        const hasNusha =
-                            idx === 1 ? true : // Nusha 1 always exists
-                                idx === 2 ? data.has_alt :
-                                    idx === 3 ? data.has_alt3 :
-                                        idx === 4 ? data.has_alt4 : false;
+                {/* Center: Nüsha selector REMOVED (Moved to ImagePanelToolbar) */}
 
-                        if (!hasNusha) return null;
-
-                        const name = data.nusha_names?.[idx.toString()] || `Nüsha ${idx}`;
-                        const sigla = siglas[idx] || (idx === 1 ? "A" : idx === 2 ? "B" : idx === 3 ? "C" : "D"); // Fallback to letters if no sigla
-                        // Or maybe just show nothing if no sigla? Use requested format.
-                        // User: "projede o nüsha için belirlenen isim ve o nüshanın rumuzu yazmalı beraberce"
-                        // Display: "Name (Sigla)"
-
-                        return (
-                            <button
-                                key={idx}
-                                onClick={() => setNushaIndex(idx)}
-                                className={`px-3 py-1 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 ${nushaIndex === idx
-                                    ? "bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/20"
-                                    : "bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700"
-                                    }`}
-                            >
-                                <span>{name}</span>
-                                <span className={`text-[10px] font-bold opacity-80 ${nushaIndex === idx ? "text-slate-800" : "text-slate-500"}`}>
-                                    ({sigla})
-                                </span>
-                            </button>
-                        );
-                    })}
-                </div>
-
-                {/* Right: Progress bar + keyboard hint */}
+                {/* Right: Progress bar */}
                 <div className="flex items-center gap-3">
                     {/* Progress */}
                     <div className="flex items-center gap-2">
-                        <div className="w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                        <div className="w-24 h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
                             <div
                                 className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 rounded-full transition-all duration-500"
                                 style={{ width: `${progressPct}%` }}
@@ -139,14 +107,6 @@ function MukabeleContent() {
                             {progressPct}%
                         </span>
                     </div>
-
-                    {/* Keyboard hint */}
-                    <button
-                        className="p-1.5 text-slate-500 hover:text-slate-300 hover:bg-slate-800 rounded-lg transition-colors"
-                        title="Klavye Kısayolları: ↑↓ satır, ←→ sayfa, Space oynat/duraklat, E sonraki hata"
-                    >
-                        <Keyboard size={15} />
-                    </button>
                 </div>
             </header>
 
@@ -159,9 +119,17 @@ function MukabeleContent() {
                             <div className="flex-1 overflow-hidden">
                                 <PageCanvas />
                             </div>
+                            <ImagePanelFooter />
                         </div>
                     }
-                    right={<LineList />}
+                    right={
+                        <div className="flex flex-col h-full">
+                            <TextPanelToolbar />
+                            <div className="flex-1 overflow-hidden relative">
+                                <LineList />
+                            </div>
+                        </div>
+                    }
                 />
             </div>
         </div>

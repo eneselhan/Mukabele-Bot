@@ -98,6 +98,7 @@ interface MukabeleContextType {
     // Helpers
     lines: LineData[]; // Returns active lines
     pages: PageData[]; // Derived pages index
+    refreshData: () => Promise<void>;
     updateLineText: (lineNo: number, newText: string) => void;
     deleteLine: (lineNo: number) => Promise<boolean>;
     mergeLines: (nushaIndex: number, lineNumbers: number[]) => Promise<void>;
@@ -513,7 +514,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
     }, [data, nushaIndex]);
 
     // LOAD DATA FUNCTION
-    const fetchData = useCallback(async () => {
+    const refreshData = useCallback(async () => {
         const pId = projectId;
         if (!pId) return;
 
@@ -570,14 +571,15 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
                     default: currentLines = jsonData.aligned || []; break;
                 }
 
+                // Helper to normalize
+                const norm = (s: string) => s.replace(/\\/g, "/").split("/").pop();
+
                 currentLines.forEach(line => {
                     if (!line.page_image) return;
-
-                    // Normalize filenames for comparison (handle paths vs filenames)
-                    const linePageName = line.page_image.replace(/\\/g, "/").split("/").pop();
+                    const linePageName = norm(line.page_image);
 
                     const target = newPages.find(p => {
-                        const pPageName = p.page_image.replace(/\\/g, "/").split("/").pop();
+                        const pPageName = norm(p.page_image);
                         return pPageName === linePageName;
                     });
 
@@ -598,16 +600,18 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
                 setPages([]);
             }
 
-            setIsLoading(false);
         } catch (err) {
-            console.error("Data load error:", err);
+            console.error("Fetch Data Error", err);
+            setData(null);
+            setPages([]);
+        } finally {
             setIsLoading(false);
         }
     }, [projectId, nushaIndex]);
 
     useEffect(() => {
-        fetchData();
-    }, [fetchData]);
+        refreshData();
+    }, [refreshData]);
 
     // Search Logic
     useEffect(() => {
@@ -743,7 +747,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
                 body: JSON.stringify({ nusha_index: nushaIndex, line_numbers: lineNumbers })
             });
             if (res.ok) {
-                fetchData();
+                refreshData();
             }
         } catch (e) {
             console.error("Merge lines failed", e);
@@ -755,27 +759,30 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
     const value = {
         data, setData,
         isLoading, setIsLoading,
-        lines,
-        pages,
         activeLine, setActiveLine: setActiveLineWithSync,
         activePageKey, setActivePageKey,
-        zoom, setZoom,
-        fontSize, setFontSize,
-        viewMode, setViewMode,
+        footnotes,
+        addFootnote,
+        deleteFootnote,
+        updateFootnote,
         searchQuery, setSearchQuery,
         searchMatches, currentSearchIndex,
         nextSearch, prevSearch,
         errorPopupData, setErrorPopupData,
+        zoom, setZoom,
+        splitRatio, setSplitRatio,
+        fontSize, setFontSize,
+        viewMode, setViewMode,
         nushaIndex, setNushaIndex,
         baseNushaIndex, updateBaseNusha,
-        splitRatio, setSplitRatio,
+        siglas, updateSigla,
+        lines,
+        pages,
+        refreshData,
+        mergeLines,
         updateLineText,
         deleteLine,
-        mergeLines,
-
-        setPages,
-        siglas, updateSigla,
-        footnotes, addFootnote, deleteFootnote, updateFootnote,
+        setPages
     };
 
     return (

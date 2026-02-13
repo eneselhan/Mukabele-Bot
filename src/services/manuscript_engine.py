@@ -377,12 +377,33 @@ class ManuscriptEngine:
             logger.info("Starting alignment...")
             print(f"[ENGINE] Aligning {len(ocr_lines)} OCR lines with Word doc...")
             
+            # Live Reference Logic: Fetch Nusha 1 (Asıl) text from DB if aligning secondary nusha
+            reference_text_override = None
+            if nusha_index > 1:
+                try:
+                    # Check if Nusha 1 lines exist in DB
+                    lines = self.db.get_aligned_lines(self.project_id, 1)
+                    if lines:
+                        # Join text (lines are sorted by line_no)
+                        full_text = []
+                        for l in lines:
+                             t = l.get("best", {}).get("raw", "")
+                             if t: full_text.append(t)
+                        
+                        if full_text:
+                            reference_text_override = " ".join(full_text)
+                            print(f"[ENGINE] Alignment using Live Reference from Nusha 1 DB ({len(full_text)} lines)")
+                            self.update_progress(nusha_index, 85, f"Canlı Referans Metni (Nüsha 1) Kullanılıyor...")
+                except Exception as e:
+                    print(f"[ENGINE] WARN: Live Reference retrieval failed: {e}")
+
             # We use write_json=False because align_ocr_to_tahkik_segment_dp writes 
             # to the global ALIGNMENT_JSON by default if True. We want to save to project.
             alignment_payload = align_ocr_to_tahkik_segment_dp(
                 docx_path=docx_path,
                 ocr_lines_override=ocr_lines,
-                write_json=False
+                write_json=False,
+                reference_text_override=reference_text_override
             )
             
             # Save to project-specific alignment.json

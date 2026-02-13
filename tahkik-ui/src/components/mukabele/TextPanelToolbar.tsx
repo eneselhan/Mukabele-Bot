@@ -6,8 +6,9 @@ import { useMukabele } from "./MukabeleContext";
 import {
     Search, X, ChevronUp, ChevronDown,
     Type, AlertTriangle, ChevronRight,
-    List, FileText, Download, Settings
+    List, FileText, Download, Trash2
 } from "lucide-react";
+import TrashBinDialog from "./TrashBinDialog";
 
 export default function TextPanelToolbar() {
     const params = useParams();
@@ -18,13 +19,12 @@ export default function TextPanelToolbar() {
         nextSearch, prevSearch,
         lines, setActiveLine,
         viewMode, setViewMode,
-        siglas, updateSigla, nushaIndex,
-        baseNushaIndex, updateBaseNusha
+        // nushaIndex etc removed as used in ImagePanel
     } = useMukabele();
 
     const [showSearch, setShowSearch] = useState(false);
     const [showErrors, setShowErrors] = useState(false);
-    const [showSettings, setShowSettings] = useState(false);
+    const [showTrash, setShowTrash] = useState(false);
 
     const [navState, setNavState] = useState<{ [key: string]: number }>({});
 
@@ -63,92 +63,111 @@ export default function TextPanelToolbar() {
     };
 
     return (
-        <div className="bg-slate-800 border-b border-slate-700 shrink-0">
+        <div className="bg-white border-b border-slate-200 shrink-0">
+            {/* Trash Bin Dialog */}
+            <TrashBinDialog isOpen={showTrash} onClose={() => setShowTrash(false)} />
+
             {/* Main toolbar row */}
             <div className="flex items-center justify-between px-3 py-1.5 text-xs">
-                {/* Search toggle + Font controls */}
-                <div className="flex items-center gap-3">
-                    {/* Search toggle */}
+
+                {/* LEFT: Search & Trash */}
+                <div className="flex items-center gap-2">
                     <button
                         onClick={() => setShowSearch(!showSearch)}
-                        className={`p-1 rounded transition-colors ${showSearch ? "text-amber-400 bg-slate-700" : "text-slate-400 hover:text-white hover:bg-slate-700"}`}
+                        className={`p-1.5 rounded transition-colors ${showSearch ? "text-amber-600 bg-amber-50 ring-1 ring-amber-200" : "text-slate-500 hover:text-slate-800 hover:bg-slate-100"}`}
                         title="Ara (Ctrl+F)"
                     >
                         <Search size={14} />
                     </button>
 
-                    {/* View Mode Toggle */}
-                    <div className="flex bg-slate-700/50 rounded-lg p-0.5" title="Görünüm Modu">
+                    <div className="h-4 w-px bg-slate-200 mx-1" />
+
+                    <button
+                        onClick={() => setShowTrash(true)}
+                        className={`p-1.5 rounded transition-colors text-slate-500 hover:text-red-600 hover:bg-red-50`}
+                        title="Çöp Kutusu"
+                    >
+                        <Trash2 size={14} />
+                    </button>
+                </div>
+
+                {/* CENTER: View Mode & Font Size */}
+                <div className="flex items-center gap-4">
+                    {/* View Mode */}
+                    <div className="flex bg-slate-100 rounded-lg p-0.5 border border-slate-200/50">
                         <button
                             onClick={() => setViewMode('list')}
-                            className={`p-1 rounded transition-colors ${viewMode === 'list' ? 'bg-slate-600 text-amber-400 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                            className={`px-2 py-0.5 rounded-md flex items-center gap-1.5 transition-all ${viewMode === 'list' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                            title="Liste Görünümü"
                         >
                             <List size={13} />
+                            <span className="font-medium">Liste</span>
                         </button>
                         <button
                             onClick={() => setViewMode('paper')}
-                            className={`p-1 rounded transition-colors ${viewMode === 'paper' ? 'bg-slate-600 text-amber-400 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                            className={`px-2 py-0.5 rounded-md flex items-center gap-1.5 transition-all ${viewMode === 'paper' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                            title="Kağıt Görünümü"
                         >
                             <FileText size={13} />
+                            <span className="font-medium">Kağıt</span>
                         </button>
                     </div>
 
-                    {/* Font size */}
-                    <div className="flex items-center gap-1 border-l border-slate-700 pl-3">
-                        <Type size={12} className="text-slate-500" />
+                    {/* Font Size */}
+                    <div className="flex items-center gap-1">
                         <button
                             onClick={() => setFontSize(Math.max(10, fontSize - 1))}
-                            className="px-1 py-0.5 text-slate-300 hover:text-white hover:bg-slate-700 rounded transition-colors"
+                            className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors"
                         >
-                            A−
+                            <Type size={10} />
                         </button>
-                        <span className="text-slate-300 font-mono w-5 text-center tabular-nums">{fontSize}</span>
+                        <span className="text-slate-600 font-mono w-4 text-center tabular-nums text-[10px]">{fontSize}</span>
                         <button
                             onClick={() => setFontSize(Math.min(40, fontSize + 1))}
-                            className="px-1 py-0.5 text-slate-300 hover:text-white hover:bg-slate-700 rounded transition-colors"
+                            className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors"
                         >
-                            A+
+                            <Type size={14} />
                         </button>
                     </div>
                 </div>
 
-                {/* Error nav dropdown toggle */}
-                <div className="relative">
-                    <button
-                        onClick={() => setShowErrors(!showErrors)}
-                        className={`flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${showErrors
-                            ? "text-amber-400 bg-slate-700"
-                            : totalErrors > 0
-                                ? "text-amber-400/80 hover:text-amber-400 hover:bg-slate-700"
-                                : "text-slate-400 hover:text-white hover:bg-slate-700"
-                            }`}
-                    >
-                        <AlertTriangle size={13} />
-                        <span className="font-medium">Hatalar</span>
-                        {totalErrors > 0 && (
-                            <span className="bg-amber-500/20 text-amber-400 px-1.5 rounded-full text-[10px] font-bold tabular-nums">
-                                {totalErrors}
-                            </span>
+                {/* RIGHT: Errors & Download */}
+                <div className="flex items-center gap-3">
+                    {/* Error nav dropdown toggle */}
+                    <div className="relative">
+                        <button
+                            onClick={() => setShowErrors(!showErrors)}
+                            className={`flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${showErrors
+                                ? "text-amber-600 bg-amber-50"
+                                : totalErrors > 0
+                                    ? "text-amber-500/90 hover:text-amber-600 hover:bg-amber-50"
+                                    : "text-slate-300 hover:text-slate-500"
+                                }`}
+                            title={totalErrors > 0 ? `${totalErrors} Hata Bulundu` : "Hata Yok"}
+                        >
+                            <AlertTriangle size={14} />
+                            {totalErrors > 0 && (
+                                <span className="bg-amber-100 text-amber-700 px-1.5 rounded-full text-[10px] font-bold tabular-nums">
+                                    {totalErrors}
+                                </span>
+                            )}
+                        </button>
+
+                        {/* Error dropdown panel */}
+                        {showErrors && (
+                            <div className="absolute right-0 top-full mt-2 w-56 bg-white border border-slate-200 rounded-lg shadow-xl z-50 p-2 space-y-1">
+                                <ErrorNavBtn label="Gemini" count={errorGroups.gemini.length} onClick={() => jumpTo("gemini")} color="text-blue-500" />
+                                <ErrorNavBtn label="GPT" count={errorGroups.openai.length} onClick={() => jumpTo("openai")} color="text-green-500" />
+                                <ErrorNavBtn label="Claude" count={errorGroups.claude.length} onClick={() => jumpTo("claude")} color="text-orange-500" />
+                                <div className="h-px bg-slate-100 my-1" />
+                                <ErrorNavBtn label="GPT + Gemini" count={errorGroups.gptgem.length} onClick={() => jumpTo("gptgem")} color="text-teal-500" />
+                                <ErrorNavBtn label="GPT + Claude" count={errorGroups.gptclaude.length} onClick={() => jumpTo("gptclaude")} color="text-yellow-500" />
+                                <ErrorNavBtn label="3'ü Ortak" count={errorGroups.all3.length} onClick={() => jumpTo("all3")} color="text-red-500" />
+                            </div>
                         )}
-                        <ChevronRight size={12} className={`transition-transform ${showErrors ? "rotate-90" : ""}`} />
-                    </button>
+                    </div>
 
-                    {/* Error dropdown panel */}
-                    {showErrors && (
-                        <div className="absolute right-0 top-full mt-1 w-56 bg-slate-800 border border-slate-600 rounded-lg shadow-xl z-50 p-2 space-y-1">
-                            <ErrorNavBtn label="Gemini" count={errorGroups.gemini.length} onClick={() => jumpTo("gemini")} color="text-blue-400" />
-                            <ErrorNavBtn label="GPT" count={errorGroups.openai.length} onClick={() => jumpTo("openai")} color="text-green-400" />
-                            <ErrorNavBtn label="Claude" count={errorGroups.claude.length} onClick={() => jumpTo("claude")} color="text-orange-400" />
-                            <div className="h-px bg-slate-700 my-1" />
-                            <ErrorNavBtn label="GPT + Gemini" count={errorGroups.gptgem.length} onClick={() => jumpTo("gptgem")} color="text-teal-400" />
-                            <ErrorNavBtn label="GPT + Claude" count={errorGroups.gptclaude.length} onClick={() => jumpTo("gptclaude")} color="text-yellow-400" />
-                            <ErrorNavBtn label="3'ü Ortak" count={errorGroups.all3.length} onClick={() => jumpTo("all3")} color="text-red-400" />
-                        </div>
-                    )}
-                </div>
-
-                <div className="flex items-center gap-2 border-l border-slate-700 pl-3">
-
+                    <div className="h-4 w-px bg-slate-200" />
 
                     <button
                         onClick={async () => {
@@ -165,8 +184,7 @@ export default function TextPanelToolbar() {
                                 const url = window.URL.createObjectURL(blob);
                                 const a = document.createElement('a');
                                 a.href = url;
-                                a.download = `project-${params.id}.docx`; // The browser might rename if backend provides Content-Disposition, but we set a default here.
-                                // Actually, let's try to get filename from header if possible, but for now this is fine.
+                                a.download = `project-${params.id}.docx`;
                                 document.body.appendChild(a);
                                 a.click();
                                 window.URL.revokeObjectURL(url);
@@ -176,166 +194,61 @@ export default function TextPanelToolbar() {
                                 alert(`Word dosyası indirilemedi: ${e.message}`);
                             }
                         }}
-                        className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700"
+                        className="flex items-center gap-1.5 px-2 py-1 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
                         title="Word Olarak İndir"
                     >
                         <Download size={14} />
-                    </button>
-
-                    {/* Settings Button */}
-                    <button
-                        onClick={() => setShowSettings(true)}
-                        className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700"
-                        title="Ayarlar"
-                    >
-                        <Settings size={14} />
+                        <span className="font-medium hidden lg:inline">İndir</span>
                     </button>
                 </div>
             </div>
 
-            {/* Expandable search row */}
+            {/* Search Bar Row (Conditional) */}
             {showSearch && (
-                <div className="flex items-center gap-2 px-3 py-1.5 border-t border-slate-700">
+                <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 animate-in slide-in-from-top-2 duration-200">
                     <div className="relative flex-1">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" size={13} />
                         <input
                             type="text"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Dizgide ara..."
+                            placeholder="Metin içinde ara..."
+                            className="w-full pl-8 pr-4 py-1.5 bg-white border border-slate-300 rounded-md text-slate-700 text-xs focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
                             autoFocus
-                            className="w-full pl-8 pr-7 py-1.5 bg-slate-700 border border-slate-600 rounded-md text-slate-200 text-xs placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50"
                         />
-                        {searchQuery && (
-                            <button
-                                onClick={() => setSearchQuery("")}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
-                            >
-                                <X size={12} />
-                            </button>
-                        )}
+                        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
                     </div>
-                    {searchQuery && (
-                        <div className="flex items-center gap-1 text-[10px] text-slate-400 shrink-0">
-                            <span className="tabular-nums">
-                                {searchMatches.length > 0
-                                    ? `${currentSearchIndex + 1}/${searchMatches.length}`
-                                    : "0"}
-                            </span>
-                            <button onClick={prevSearch} disabled={!searchMatches.length} className="p-0.5 hover:bg-slate-700 rounded disabled:opacity-30"><ChevronUp size={14} /></button>
-                            <button onClick={nextSearch} disabled={!searchMatches.length} className="p-0.5 hover:bg-slate-700 rounded disabled:opacity-30"><ChevronDown size={14} /></button>
-                        </div>
-                    )}
+                    <div className="flex items-center gap-1 text-slate-500 text-[10px] font-mono whitespace-nowrap">
+                        {searchMatches.length > 0 ? (
+                            <>
+                                <span>{currentSearchIndex + 1} / {searchMatches.length}</span>
+                                <div className="flex gap-0.5">
+                                    <button onClick={prevSearch} className="p-1 hover:bg-slate-200 rounded"><ChevronUp size={14} /></button>
+                                    <button onClick={nextSearch} className="p-1 hover:bg-slate-200 rounded"><ChevronDown size={14} /></button>
+                                </div>
+                            </>
+                        ) : searchQuery ? (
+                            <span className="text-slate-400 italic">Sonuç yok</span>
+                        ) : null}
+                    </div>
+                    <button onClick={() => setShowSearch(false)} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded">
+                        <X size={14} />
+                    </button>
                 </div>
             )}
-
-            {/* Settings Modal */}
-            {
-                showSettings && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
-                        <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-full max-w-sm animate-in fade-in zoom-in duration-200">
-                            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
-                                <h3 className="font-bold text-slate-200 text-sm flex items-center gap-2">
-                                    <Settings size={16} />
-                                    Proje Ayarları
-                                </h3>
-                                <button onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-white hover:bg-slate-700 p-1 rounded transition-colors">
-                                    <X size={16} />
-                                </button>
-                            </div>
-
-                            <div className="p-4 space-y-4">
-                                <div>
-                                    <div className="text-xs font-bold text-slate-500 uppercase mb-3 px-1">Nüsha Yönetimi</div>
-                                    <div className="space-y-2">
-                                        {[1, 2, 3, 4].map(idx => (
-                                            <div
-                                                key={idx}
-                                                className={`grid grid-cols-[1fr_auto_auto] gap-3 items-center p-2 rounded border transition-colors ${baseNushaIndex === idx
-                                                    ? "bg-slate-700/80 border-amber-500/30 ring-1 ring-amber-500/20"
-                                                    : "bg-slate-700/30 border-slate-700"
-                                                    }`}
-                                            >
-                                                <div className="flex items-center gap-2">
-                                                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${baseNushaIndex === idx ? "bg-amber-500 text-slate-900" : "bg-slate-600 text-slate-300"
-                                                        }`}>
-                                                        {idx}
-                                                    </div>
-                                                    <span className={`text-sm font-medium ${baseNushaIndex === idx ? "text-amber-100" : "text-slate-300"}`}>
-                                                        Nüsha {idx}
-                                                    </span>
-                                                </div>
-
-                                                {/* Sigla Input */}
-                                                <div className="flex items-center gap-1.5" title="Rumuz">
-                                                    <span className="text-[10px] uppercase font-bold text-slate-500">Rumuz</span>
-                                                    <input
-                                                        className="w-10 text-center bg-slate-900 border border-slate-600 rounded py-1 text-xs text-white uppercase placeholder-slate-600 focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/50 transition-all font-mono"
-                                                        placeholder={idx === 1 ? "A" : idx === 2 ? "B" : idx === 3 ? "C" : "D"}
-                                                        defaultValue={siglas[idx] || ""}
-                                                        onBlur={(e) => {
-                                                            const val = e.target.value.trim().toUpperCase();
-                                                            if (val !== (siglas[idx] || "")) {
-                                                                updateSigla(idx, val);
-                                                            }
-                                                        }}
-                                                        onKeyDown={(e) => {
-                                                            if (e.key === "Enter") {
-                                                                e.currentTarget.blur();
-                                                            }
-                                                        }}
-                                                    />
-                                                </div>
-
-                                                {/* Base Nusha Radio */}
-                                                <label className="flex items-center gap-1.5 cursor-pointer ml-1 pl-2 border-l border-slate-600/50" title="Asıl Nüsha Olarak Ayarla">
-                                                    <input
-                                                        type="radio"
-                                                        name="baseNusha"
-                                                        checked={baseNushaIndex === idx}
-                                                        onChange={async () => {
-                                                            await updateBaseNusha(idx);
-                                                        }}
-                                                        className="hidden peer"
-                                                    />
-                                                    <div className="w-3 h-3 rounded-full border border-slate-500 peer-checked:bg-amber-500 peer-checked:border-amber-500 transition-colors relative flex items-center justify-center">
-                                                        <div className="w-1 h-1 bg-slate-900 rounded-full opacity-0 peer-checked:opacity-100 transition-opacity" />
-                                                    </div>
-                                                    <span className={`text-xs font-bold transition-colors ${baseNushaIndex === idx ? "text-amber-400" : "text-slate-500 peer-hover:text-slate-400"}`}>
-                                                        ASIL
-                                                    </span>
-                                                </label>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                <div className="text-[10px] text-slate-500 bg-slate-700/30 p-2 rounded border border-slate-700/50 flex align-top gap-2">
-                                    <AlertTriangle size={12} className="text-amber-500/70 mt-0.5 shrink-0" />
-                                    <span>
-                                        <strong className="text-slate-400">Not:</strong> Asıl Nüsha değişimi, ana metin görünümünü ve dipnot referanslarını doğrudan etkiler.
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )
-            }
-        </div >
+        </div>
     );
 }
 
-function ErrorNavBtn({ label, count, onClick, color }: { label: string; count: number; onClick: () => void; color: string }) {
+// Helper for Error Nav logic
+function ErrorNavBtn({ label, count, onClick, color }: { label: string, count: number, onClick: () => void, color: string }) {
+    if (count === 0) return null;
     return (
         <button
             onClick={onClick}
-            disabled={count === 0}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-xs"
+            className="w-full flex items-center justify-between px-2 py-1.5 hover:bg-slate-50 rounded text-left text-xs transition-colors"
         >
-            <span className={`font-medium ${color}`}>{label}</span>
-            <span className="bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded-full text-[10px] font-bold tabular-nums min-w-[1.5rem] text-center">
-                {count}
-            </span>
+            <span className="text-slate-600 font-medium">{label}</span>
+            <span className={`font-bold ${color}`}>{count}</span>
         </button>
     );
 }

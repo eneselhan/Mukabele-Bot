@@ -91,7 +91,7 @@ const PageLayer = React.memo(({
     return (
         <div
             ref={containerRef}
-            className="relative inline-block transition-all duration-200 origin-top rounded-lg overflow-hidden shadow-2xl shadow-black/40 mb-6"
+            className="relative inline-block transition-all duration-200 origin-top rounded-lg overflow-hidden shadow-2xl shadow-black/40 mb-10"
             style={{ width: `${zoom * 100}%` }}
             id={`page-${page.key}`}
         >
@@ -225,7 +225,8 @@ export default function PageCanvas() {
         zoom,
         activeLine,
         setActiveLine,
-        nushaIndex
+        nushaIndex,
+        lines // Add lines for navigation
     } = useMukabele();
 
     const params = useParams();
@@ -256,14 +257,38 @@ export default function PageCanvas() {
         }
     }, [activePageKey]);
 
-    // Sync: Scroll list to page when activePageKey changes manually (e.g. thumb click)
-    // We need to differentiate between user scrolling (Intersection) and thumb click.
-    // We can use a separate mechanism or just check if it's already visible.
-    // For now, let's assume if the User clicked a thumbnail, we want to scroll there.
-    // But wait, IntersectionObserver sets activePageKey too. cyclic?
-    // No, onPageVisible checks isScrollingRef.
+    // Keyboard Navigation (Cross-Page)
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Ignore if active element is an input/textarea/contentEditable
+            const target = e.target as HTMLElement;
+            if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+                return;
+            }
 
-    // Actually, handling "User clicked thumbnail" is better done in the click handler.
+            if (activeLine === null) return;
+
+            if (e.key === "ArrowDown") {
+                e.preventDefault();
+                const idx = lines.findIndex(l => l.line_no === activeLine);
+                if (idx !== -1 && idx < lines.length - 1) {
+                    const nextLine = lines[idx + 1].line_no;
+                    setActiveLine(nextLine);
+                }
+            } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                const idx = lines.findIndex(l => l.line_no === activeLine);
+                if (idx > 0) {
+                    const prevLine = lines[idx - 1].line_no;
+                    setActiveLine(prevLine);
+                }
+            }
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [activeLine, lines, setActiveLine]);
+
     const handleThumbClick = (key: string) => {
         isScrollingRef.current = true;
         setActivePageKey(key);
@@ -273,7 +298,6 @@ export default function PageCanvas() {
             pageEl.scrollIntoView({ behavior: "smooth", block: "start" });
         }
 
-        // Reset scrolling lock after animation
         setTimeout(() => {
             isScrollingRef.current = false;
         }, 800);
@@ -284,7 +308,7 @@ export default function PageCanvas() {
             {/* Main scrollable list */}
             <div
                 ref={containerRef}
-                className="flex-1 overflow-auto relative text-center p-3 flex flex-col items-center"
+                className="flex-1 overflow-auto relative text-center px-4 py-6 flex flex-col items-center"
             >
                 <div className="flex flex-col items-center pb-20 w-full">
                     {pages.map(page => (
@@ -305,8 +329,7 @@ export default function PageCanvas() {
             {/* Thumbnail strip */}
             <div
                 ref={thumbnailsRef}
-                className="shrink-0 bg-slate-850 border-t border-slate-700 overflow-x-auto scrollbar-thin scrollbar-thumb-slate-700 py-1.5"
-                style={{ backgroundColor: "rgb(22, 28, 38)" }}
+                className="shrink-0 bg-white border-t border-slate-200 overflow-x-auto scrollbar-thin scrollbar-thumb-slate-300 py-1.5"
             >
                 <div className="flex justify-center min-w-full px-2 gap-1.5 w-fit mx-auto">
                     {pages.map((page, idx) => {
@@ -324,9 +347,9 @@ export default function PageCanvas() {
                                 key={page.key}
                                 id={`thumb-${page.key}`}
                                 onClick={() => handleThumbClick(page.key)}
-                                className={`shrink-0 flex flex-col items-center gap-0.5 rounded-md p-0.5 transition-all ${isActive
-                                    ? "ring-2 ring-amber-500 bg-slate-700"
-                                    : "hover:bg-slate-700/50 opacity-60 hover:opacity-100"
+                                className={`shrink-0 flex flex-col items-center gap-0.5 rounded-md p-0.5 transition-all border ${isActive
+                                    ? "ring-1 ring-amber-500 bg-amber-50 border-amber-200"
+                                    : "border-transparent hover:bg-slate-100 opacity-70 hover:opacity-100"
                                     }`}
                                 title={page.page_name}
                             >
@@ -334,15 +357,15 @@ export default function PageCanvas() {
                                     <img
                                         src={thumbUrl}
                                         alt={label}
-                                        className="h-10 w-auto rounded object-contain bg-slate-950"
+                                        className="h-10 w-auto rounded object-contain bg-slate-100 border border-slate-200"
                                         loading="lazy"
                                     />
                                 ) : (
-                                    <div className="h-10 w-8 bg-slate-700 rounded flex items-center justify-center text-[9px] text-slate-400">
+                                    <div className="h-10 w-8 bg-slate-100 border border-slate-200 rounded flex items-center justify-center text-[9px] text-slate-400">
                                         {idx + 1}
                                     </div>
                                 )}
-                                <span className={`text-[8px] font-medium tabular-nums ${isActive ? "text-amber-400" : "text-slate-500"}`}>
+                                <span className={`text-[9px] font-bold tabular-nums ${isActive ? "text-amber-600" : "text-slate-500"}`}>
                                     {label}
                                 </span>
                             </button>

@@ -558,6 +558,18 @@ class ProjectManager:
         
         target_line["best"]["raw"] = merged_text
         
+        # 1. Merge Indices (Start/End Word)
+        # Collect all valid start/end indices from merging lines
+        lines_to_merge = [target_line] + [lines[i] for i in indices[1:]]
+        
+        starts = [l.get("best", {}).get("start_word") for l in lines_to_merge if l.get("best", {}).get("start_word") is not None]
+        ends = [l.get("best", {}).get("end_word") for l in lines_to_merge if l.get("best", {}).get("end_word") is not None]
+        
+        if starts:
+            target_line["best"]["start_word"] = min(starts)
+        if ends:
+            target_line["best"]["end_word"] = max(ends)
+        
         target_line["best"]["raw"] = merged_text
         
         # Clear merged lines (preserve indices/containers)
@@ -586,7 +598,7 @@ class ProjectManager:
 
     def shift_line_content(self, project_id: str, nusha_index: int, line_no: int, direction: str, split_index: int):
         """
-        Shifts content between lines, handling text and footnotes.
+        Shifts content between lines, handling text, footnotes, AND word indices.
         direction: "prev" (move start->split to prev line) or "next" (move split->end to next line)
         """
         nusha_dir = self.get_nusha_dir(project_id, nusha_index)
@@ -608,36 +620,46 @@ class ProjectManager:
         current_line = lines[curr_idx]
         current_text = current_line.get("best", {}).get("raw", "")
         
-        # Validation and Logic (Omitted for brevity, assuming standard logic remains)
-        # ... logic ...
-        # NOTE: Since I am replacing the whole block, I must keep valid logic.
-        # I cannot just skip lines. I need to copy the logic from previous step or re-implement.
-        # It's safer to read the file content to be sure, but I saw it in Step 1170 call.
-        
         if direction == "prev":
             if curr_idx == 0: return {"success": False, "error": "No previous line"}
             target_idx = curr_idx - 1
             target_line = lines[target_idx]
             target_line_no = target_line["line_no"]
             
-            moving_text = current_text[:split_index]
-            remaining_text = current_text[split_index:]
+            # Words moving to PREV line
+            moving_part = current_text[:split_index]
+            remaining_part = current_text[split_index:]
             
+            # Calculate word count change
+            words_moved_count = len(moving_part.strip().split())
+            if not moving_part.strip(): words_moved_count = 0
+
+            # Text Update
             target_text = target_line.get("best", {}).get("raw", "")
             target_len_before = len(target_text)
             
-            target_line["best"]["raw"] = (target_text + " " + moving_text).strip()
-            current_line["best"]["raw"] = remaining_text.strip()
+            # Join with space if not empty
+            joiner = " " if target_text and moving_part else ""
+            target_line["best"]["raw"] = (target_text + joiner + moving_part).strip()
+            current_line["best"]["raw"] = remaining_part.strip()
             
-            offset = target_len_before + 1
+            # Index Update (Prev line END increases, Curr line START increases)
+            if "end_word" in target_line["best"] and "start_word" in current_line["best"]:
+                 target_line["best"]["end_word"] += words_moved_count
+                 current_line["best"]["start_word"] += words_moved_count
+            
+            # Footnote Update
+            offset = target_len_before + len(joiner)
             
             for fn in footnotes:
                 if fn.get("line_no") == line_no:
                     idx = fn.get("index", 0)
                     if idx < split_index:
+                        # Moves to prev line
                         fn["line_no"] = target_line_no
                         fn["index"] = offset + idx
                     else:
+                        # Stays, shifts left
                         fn["index"] = idx - split_index
                         
         elif direction == "next":
@@ -646,32 +668,47 @@ class ProjectManager:
             target_line = lines[target_idx]
             target_line_no = target_line["line_no"]
             
-            remaining_text = current_text[:split_index]
-            moving_text = current_text[split_index:]
+            # Words moving to NEXT line
+            remaining_part = current_text[:split_index]
+            moving_part = current_text[split_index:]
             
+            words_moved_count = len(moving_part.strip().split())
+            if not moving_part.strip(): words_moved_count = 0
+            
+            # Text Update
             target_text = target_line.get("best", {}).get("raw", "")
             
-            target_line["best"]["raw"] = (moving_text + " " + target_text).strip()
-            current_line["best"]["raw"] = remaining_text.strip()
+            joiner = " " if moving_part and target_text else ""
+            target_line["best"]["raw"] = (moving_part + joiner + target_text).strip()
+            current_line["best"]["raw"] = remaining_part.strip()
             
-            moved_len = len(moving_text) + 1
+            # Index Update (Curr line END decreases, Next line START decreases)
+            if "end_word" in current_line["best"] and "start_word" in target_line["best"]:
+                current_line["best"]["end_word"] -= words_moved_count
+                target_line["best"]["start_word"] -= words_moved_count
             
+            # Footnote Update
+            moved_len = len(moving_part) + len(joiner)
+            
+            # Shift existing footnotes in target line
             for fn in footnotes:
                 if fn.get("line_no") == target_line_no:
                     fn["index"] += moved_len
             
+            # Move footnotes from current line
             for fn in footnotes:
                 if fn.get("line_no") == line_no:
                     idx = fn.get("index", 0)
                     if idx >= split_index:
                         fn["line_no"] = target_line_no
                         fn["index"] = idx - split_index
+                        
         else:
             return {"success": False, "error": "Invalid direction"}
         
-        # Save
+        # Save All
         write_json_atomic(alignment_path, data)
-        self._save_metadata(project_id, meta) # Using helper which syncs to DB
+        self._save_metadata(project_id, meta)
         
         # DB Sync Lines
         try:
@@ -679,6 +716,12 @@ class ProjectManager:
         except Exception as e:
             print(f"[WARN] DB Sync failed for shift_line_content: {e}")
             
+        # DB Sync Footnotes
+        try:
+            self.db.upsert_footnotes(project_id, footnotes)
+        except Exception as e:
+            print(f"[WARN] DB Sync footnotes failed: {e}")
+
         return {"success": True}
 
 
@@ -784,23 +827,66 @@ class ProjectManager:
              
         return True
 
+    
+    def get_deleted_lines(self, project_id: str, nusha_index: int) -> List[Dict]:
+        """
+        Retrieves lines that are marked as deleted.
+        """
+        try:
+            return self.db.get_deleted_lines(project_id, nusha_index)
+        except Exception as e:
+            print(f"[ERROR] Failed to get deleted lines: {e}")
+            return []
+
+    def restore_nusha_line(self, project_id: str, nusha_index: int, line_no: int) -> bool:
+        """
+        Restores a soft-deleted line.
+        """
+        # 1. Update DB (is_deleted=0)
+        try:
+            # We need a db method for this
+            self.db.restore_aligned_line(project_id, nusha_index, line_no)
+        except Exception as e:
+            print(f"[ERROR] DB restore failed: {e}")
+            return False
+            
+        # 2. Sync to Filesystem
+        # Re-fetch lines (which should now include the restored line)
+        try:
+            lines = self.get_nusha_alignment(project_id, nusha_index)
+            
+            nusha_dir = self.get_nusha_dir(project_id, nusha_index)
+            target_path = nusha_dir / "alignment.json"
+            if nusha_index == 1:
+                 if not target_path.exists() and (self.projects_dir / project_id / "alignment.json").exists():
+                     target_path = self.projects_dir / project_id / "alignment.json"
+            
+            full_payload = {"aligned": lines}
+            if target_path.exists():
+                with open(target_path, "r", encoding="utf-8") as f:
+                    full_payload = json.load(f)
+            
+            full_payload["aligned"] = lines
+            write_json_atomic(target_path, full_payload)
+        except Exception as e:
+            print(f"[WARN] FS sync failed during restore: {e}")
+            
+        return True
+
     def delete_nusha_line(self, project_id: str, nusha_index: int, line_no: int) -> bool:
         """
-        Deletes a line from DB and Filesystem.
+        Soft deletes a line from DB and removes it from Filesystem.
         """
-        # 1. Update DB
+        # 1. Update DB (Soft Delete)
         try:
-            self.db.delete_aligned_line(project_id, nusha_index, line_no)
+            self.db.soft_delete_aligned_line(project_id, nusha_index, line_no)
         except Exception as e:
             print(f"[ERROR] DB delete failed: {e}")
             return False
             
-        # 2. Sync to Filesystem
+        # 2. Sync to Filesystem (Exclude deleted lines)
         try:
-            # We need to write the new list (without the line)
-            # Re-fetch lines from DB to get the current state (which should now be missing the line? No, verify!)
-            # Database `delete_aligned_line` removes it. 
-            # So `get_nusha_alignment` will return list WITHOUT it.
+            # get_nusha_alignment logic should filter out deleted lines
             lines = self.get_nusha_alignment(project_id, nusha_index)
             
             nusha_dir = self.get_nusha_dir(project_id, nusha_index)

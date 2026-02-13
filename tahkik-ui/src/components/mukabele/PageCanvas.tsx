@@ -305,48 +305,50 @@ export default function PageCanvas() {
             {/* Thumbnail strip */}
             <div
                 ref={thumbnailsRef}
-                className="shrink-0 bg-slate-850 border-t border-slate-700 px-2 py-1.5 overflow-x-auto flex gap-1.5 items-center scrollbar-thin scrollbar-thumb-slate-700"
+                className="shrink-0 bg-slate-850 border-t border-slate-700 overflow-x-auto scrollbar-thin scrollbar-thumb-slate-700 py-1.5"
                 style={{ backgroundColor: "rgb(22, 28, 38)" }}
             >
-                {pages.map((page, idx) => {
-                    const isActive = page.key === activePageKey;
-                    const rawPath = page.page_image?.replace(/\\/g, "/");
-                    const fname = rawPath?.split("/").pop();
-                    const thumbUrl = fname
-                        ? `http://127.0.0.1:8000/media/${projectId}/nusha_${nushaIndex}/pages/${fname}`
-                        : null;
+                <div className="flex justify-center min-w-full px-2 gap-1.5 w-fit mx-auto">
+                    {pages.map((page, idx) => {
+                        const isActive = page.key === activePageKey;
+                        const rawPath = page.page_image?.replace(/\\/g, "/");
+                        const fname = rawPath?.split("/").pop();
+                        const thumbUrl = fname
+                            ? `http://127.0.0.1:8000/media/${projectId}/nusha_${nushaIndex}/pages/${fname}`
+                            : null;
 
-                    const label = page.page_name?.match(/_(\d+[LR])\.png$/i)?.[1] || `${idx + 1}`;
+                        const label = page.page_name?.match(/_(\d+[LR])\.png$/i)?.[1] || `${idx + 1}`;
 
-                    return (
-                        <button
-                            key={page.key}
-                            id={`thumb-${page.key}`}
-                            onClick={() => handleThumbClick(page.key)}
-                            className={`shrink-0 flex flex-col items-center gap-0.5 rounded-md p-0.5 transition-all ${isActive
-                                ? "ring-2 ring-amber-500 bg-slate-700"
-                                : "hover:bg-slate-700/50 opacity-60 hover:opacity-100"
-                                }`}
-                            title={page.page_name}
-                        >
-                            {thumbUrl ? (
-                                <img
-                                    src={thumbUrl}
-                                    alt={label}
-                                    className="h-10 w-auto rounded object-contain bg-slate-950"
-                                    loading="lazy"
-                                />
-                            ) : (
-                                <div className="h-10 w-8 bg-slate-700 rounded flex items-center justify-center text-[9px] text-slate-400">
-                                    {idx + 1}
-                                </div>
-                            )}
-                            <span className={`text-[8px] font-medium tabular-nums ${isActive ? "text-amber-400" : "text-slate-500"}`}>
-                                {label}
-                            </span>
-                        </button>
-                    );
-                })}
+                        return (
+                            <button
+                                key={page.key}
+                                id={`thumb-${page.key}`}
+                                onClick={() => handleThumbClick(page.key)}
+                                className={`shrink-0 flex flex-col items-center gap-0.5 rounded-md p-0.5 transition-all ${isActive
+                                    ? "ring-2 ring-amber-500 bg-slate-700"
+                                    : "hover:bg-slate-700/50 opacity-60 hover:opacity-100"
+                                    }`}
+                                title={page.page_name}
+                            >
+                                {thumbUrl ? (
+                                    <img
+                                        src={thumbUrl}
+                                        alt={label}
+                                        className="h-10 w-auto rounded object-contain bg-slate-950"
+                                        loading="lazy"
+                                    />
+                                ) : (
+                                    <div className="h-10 w-8 bg-slate-700 rounded flex items-center justify-center text-[9px] text-slate-400">
+                                        {idx + 1}
+                                    </div>
+                                )}
+                                <span className={`text-[8px] font-medium tabular-nums ${isActive ? "text-amber-400" : "text-slate-500"}`}>
+                                    {label}
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
             </div>
         </div>
     );

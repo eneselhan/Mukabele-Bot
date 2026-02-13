@@ -30,7 +30,16 @@ export default function LineList() {
         if (activeLine === null || !listRef.current) return;
         const el = listRef.current.querySelector(`[data-line="${activeLine}"]`);
         if (el) {
-            el.scrollIntoView({ behavior: "smooth", block: "center" });
+            const rect = el.getBoundingClientRect();
+            const containerRect = listRef.current.getBoundingClientRect();
+            const isVisible = (
+                rect.top >= containerRect.top &&
+                rect.bottom <= containerRect.bottom
+            );
+
+            if (!isVisible) {
+                el.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
         }
     }, [activeLine]);
 

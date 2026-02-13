@@ -225,9 +225,124 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem("mukabele_view_mode", mode);
     };
 
-    const setNushaIndex = (n: number) => {
-        setNushaIndexState(n);
-        if (projectId) localStorage.setItem(`mukabele_${projectId}_nusha`, n.toString());
+    const setNushaIndex = (targetIndex: number) => {
+        // 1. Capture current state (Pivot)
+        let pivotWord = "";
+        let relativePosition = 0; // 0.0 to 1.0
+
+        if (activeLine !== null) {
+            // Find current active line object
+            let currentLineObj: LineData | undefined;
+            let currentLineIdx = -1;
+
+            // Get current lines based on OLD nushaIndex
+            let currentLines: LineData[] = [];
+            switch (nushaIndex) {
+                case 2: currentLines = data?.aligned_alt || []; break;
+                case 3: currentLines = data?.aligned_alt3 || []; break;
+                case 4: currentLines = data?.aligned_alt4 || []; break;
+                default: currentLines = data?.aligned || []; break;
+            }
+
+            // Find line index
+            currentLineIdx = currentLines.findIndex(l => l.line_no === activeLine);
+
+            if (currentLineIdx !== -1) {
+                // Calculate relative position (fallback)
+                relativePosition = currentLines.length > 0 ? currentLineIdx / currentLines.length : 0;
+
+                // Attempt to find pivot word
+                // If empty, search BACKWARDS
+                let searchIdx = currentLineIdx;
+                let found = false;
+
+                // Search backwards (including current)
+                while (searchIdx >= 0) {
+                    const txt = currentLines[searchIdx]?.best?.raw?.trim() || "";
+                    if (txt) {
+                        const words = txt.split(/\s+/);
+                        if (words.length > 0) {
+                            pivotWord = words[0]; // Use FIRST word
+                            found = true;
+                            break;
+                        }
+                    }
+                    searchIdx--;
+                }
+
+                // If not found backwards, try forwards (rare edge case: start of doc empty)
+                if (!found) {
+                    searchIdx = currentLineIdx + 1;
+                    while (searchIdx < currentLines.length) {
+                        const txt = currentLines[searchIdx]?.best?.raw?.trim() || "";
+                        if (txt) {
+                            const words = txt.split(/\s+/);
+                            if (words.length > 0) {
+                                pivotWord = words[0]; // Use FIRST word
+                                found = true;
+                                break;
+                            }
+                        }
+                        searchIdx++;
+                    }
+                }
+            }
+        }
+
+        // 2. Switch Nüsha
+        setNushaIndexState(targetIndex);
+        if (projectId) localStorage.setItem(`mukabele_${projectId}_nusha`, targetIndex.toString());
+
+        // 3. Find Match in Target Nüsha
+        if (pivotWord && data) {
+            let targetLines: LineData[] = [];
+            switch (targetIndex) {
+                case 2: targetLines = data.aligned_alt || []; break;
+                case 3: targetLines = data.aligned_alt3 || []; break;
+                case 4: targetLines = data.aligned_alt4 || []; break;
+                default: targetLines = data.aligned || []; break;
+            }
+
+            if (targetLines.length > 0) {
+                // Heuristic: Start search from relative position to avoid false positives (e.g. common words)
+                const startIdx = Math.floor(targetLines.length * relativePosition);
+
+                // Search outward from startIdx
+                let bestMatchLine: number | null = null;
+                let minDist = Infinity;
+
+                // Limit search radius for performance (e.g. +/- 50 lines)
+                const radius = 50;
+                const minI = Math.max(0, startIdx - radius);
+                const maxI = Math.min(targetLines.length - 1, startIdx + radius);
+
+                for (let i = minI; i <= maxI; i++) {
+                    const txt = targetLines[i]?.best?.raw || "";
+                    if (txt.includes(pivotWord)) {
+                        // Found a candidate.
+                        // Prefer closest to startIdx
+                        const dist = Math.abs(i - startIdx);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            bestMatchLine = targetLines[i].line_no;
+                            // Optimistic break if very close
+                            if (dist === 0) break;
+                        }
+                    }
+                }
+
+                if (bestMatchLine !== null) {
+                    // Use setTimeout to allow render cycle to update lines view before scrolling
+                    setTimeout(() => setActiveLineWithSync(bestMatchLine), 50);
+                } else {
+                    // Fallback: Just map by relative index
+                    const fallbackLine = targetLines[Math.min(startIdx, targetLines.length - 1)];
+                    if (fallbackLine) {
+                        setTimeout(() => setActiveLineWithSync(fallbackLine.line_no), 50);
+                    }
+                }
+            }
+        }
     };
 
     const params = useParams();

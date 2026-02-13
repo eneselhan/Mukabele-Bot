@@ -82,12 +82,20 @@ export default function DocumentView() {
     // Scroll active line into view
     useEffect(() => {
         if (activeLine === null || !containerRef.current) return;
-        // Find line span by data-line-no
-        // Note: The spans are inside the container's dangerouslySetInnerHTML if using that, 
-        // OR as mapped elements. In DocumentView they are mapped elements.
         const el = containerRef.current.querySelector(`[data-line-no="${activeLine}"]`);
         if (el) {
-            el.scrollIntoView({ behavior: "smooth", block: "center" });
+            const rect = el.getBoundingClientRect();
+            const containerRect = containerRef.current.getBoundingClientRect();
+
+            // Check if element is visible within the container
+            const isVisible = (
+                rect.top >= containerRect.top &&
+                rect.bottom <= containerRect.bottom
+            );
+
+            if (!isVisible) {
+                el.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
         }
     }, [activeLine]);
 
@@ -597,7 +605,7 @@ export default function DocumentView() {
     }, [footnotes]);
 
     return (
-        <div className="flex-1 bg-slate-100 overflow-y-auto p-8 flex flex-col items-center gap-8 relative">
+        <div ref={containerRef} className="flex-1 bg-slate-100 overflow-y-auto p-8 flex flex-col items-center gap-8 relative">
             {selection && !menuOpen && renderMenu()}
             {menuOpen && renderMenu()}
 
@@ -611,7 +619,7 @@ export default function DocumentView() {
                 <div
                     key={pageIndex}
                     id={`page-${pageIndex}`}
-                    className="bg-white w-[210mm] min-h-[297mm] p-[20mm] text-slate-900 shadow-md relative flex flex-col"
+                    className="bg-white w-full min-h-[297mm] p-[20mm] text-slate-900 shadow-md relative flex flex-col"
                     dir="rtl"
                     style={{
                         fontFamily: "'Amiri', 'Traditional Arabic', serif",

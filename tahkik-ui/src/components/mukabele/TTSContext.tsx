@@ -14,12 +14,15 @@ interface TTSContextType {
     setRate: (rate: number) => void;
     currentAudioChunk: number;
     totalAudioChunks: number;
+    currentTime: number;
+    duration: number;
+    seek: (time: number) => void;
 }
 
 const TTSContext = createContext<TTSContextType | undefined>(undefined);
 
 export function TTSProvider({ children }: { children: React.ReactNode }) {
-    const { lines, activePageKey, projectId, nushaIndex } = useMukabele() as any; // Need access to lines text
+    const { lines, pages, activePageKey, projectId, nushaIndex } = useMukabele() as any; // Need access to lines text
 
     const [isPlaying, setIsPlaying] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
@@ -27,6 +30,8 @@ export function TTSProvider({ children }: { children: React.ReactNode }) {
     const [rate, setRateState] = useState(1.0);
     const [currentAudioChunk, setCurrentAudioChunk] = useState(0);
     const [totalAudioChunks, setTotalAudioChunks] = useState(0);
+    const [currentTime, setCurrentTime] = useState(0);
+    const [duration, setDuration] = useState(0);
 
     // Audio State
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -44,6 +49,8 @@ export function TTSProvider({ children }: { children: React.ReactNode }) {
         };
     }, []);
 
+
+
     const setRate = (r: number) => {
         setRateState(r);
         if (audioRef.current) {
@@ -60,15 +67,35 @@ export function TTSProvider({ children }: { children: React.ReactNode }) {
         // For simplicity, let's vocalize the *active page* or *lines currently in view*?
         // Let's grab all lines for now (might be heavy for huge docs, but okay for typical manuscript pages)
 
+        // Filter for Active Page Lines ONLY
+        // Filter for Active Page Lines ONLY
+        if (!activePageKey || !pages.length) {
+            console.warn("[TTS] No active page or pages loaded.");
+            alert("Etkin sayfa bulunamadı. Lütfen sayfayı yenileyiniz.");
+            return;
+        }
+        const activePage = pages.find((p: any) => p.key === activePageKey);
+        if (!activePage) {
+            console.warn("[TTS] Active page not found in pages list.");
+            alert("Etkin sayfa verisi bulunamadı.");
+            return;
+        }
+        const targetLines = activePage.lines || [];
+
         const allTokens: string[] = [];
-        lines.forEach((l: any) => {
+        targetLines.forEach((l: any) => {
             const raw = l.best?.raw || "";
             if (raw) {
                 allTokens.push(...raw.split(/\s+/));
             }
         });
 
-        if (allTokens.length === 0) return;
+        if (allTokens.length === 0) {
+            console.warn("[TTS] No tokens found.");
+            alert("Seslendirilecek metin bulunamadı (Sayfa boş veya yüklenemedi).");
+            return;
+        }
+        console.log("[TTS] Fetching for tokens:", allTokens.length);
 
         setIsLoading(true);
         try {
@@ -81,8 +108,8 @@ export function TTSProvider({ children }: { children: React.ReactNode }) {
                     tokens: allTokens,
                     speaking_rate: rate,
                     nusha_id: nushaIndex || 1,
-                    page_key: activePageKey || "page_unknown"
-                    // We could send page_key to use cached audio if backend supports it
+                    page_key: activePageKey || "page_unknown",
+                    archive_path: projectId // Use project ID as archive path for caching
                 })
             });
             const data = await res.json();
@@ -149,24 +176,45 @@ export function TTSProvider({ children }: { children: React.ReactNode }) {
         if (audioRef.current) {
             audioRef.current.src = chunk.url;
             audioRef.current.playbackRate = rate;
-            audioRef.current.play().catch(e => console.error("Play error", e));
+            audioRef.current.play().catch(e => {
+                console.error("Play error (Ref)", e);
+                alert("Ses çalınamadı. Tarayıcı izinlerini kontrol ediniz.\nHata: " + e.message);
+            });
             setIsPlaying(true);
         } else {
+            console.log("[TTS] Creating new Audio object for chunk", index);
             const audio = new Audio(chunk.url);
             audio.playbackRate = rate;
             audio.onended = () => {
+                console.log("[TTS] Chunk ended", index);
                 playChunk(chunkIndexRef.current + 1);
+            };
+            audio.onerror = (e) => {
+                console.error("Audio Load Error", e);
+                alert("Ses dosyası yüklenemedi (Decoding Error).");
             };
             audio.ontimeupdate = handleTimeUpdate;
             audioRef.current = audio;
-            audio.play().catch(e => console.error("Play error", e));
+            audio.onloadedmetadata = handleLoadedMetadata;
+            audio.play().catch(e => {
+                console.error("Play error (New)", e);
+                alert("Ses başlatılamadı (Autoplay Policy?).\nHata: " + e.message);
+            });
             setIsPlaying(true);
         }
     };
 
+    const handleLoadedMetadata = () => {
+        if (audioRef.current) {
+            setDuration(audioRef.current.duration);
+        }
+    };
+
+
     const handleTimeUpdate = () => {
         if (!audioRef.current) return;
         const t = audioRef.current.currentTime;
+        setCurrentTime(t);
 
         // Find latest timepoint
         // Timepoints are like [{mark: "w5", time: 0.12}, ...]
@@ -184,19 +232,23 @@ export function TTSProvider({ children }: { children: React.ReactNode }) {
     };
 
     const play = useCallback(() => {
+        console.log("[TTS] Play called. Lines:", lines?.length, "Chunks:", chunksRef.current.length);
         if (chunksRef.current.length > 0) {
             // Resume or restart
             if (audioRef.current) {
+                console.log("[TTS] Resuming audioRef");
                 audioRef.current.play();
                 setIsPlaying(true);
             } else {
+                console.log("[TTS] Playing chunk 0");
                 playChunk(0);
             }
         } else {
             // Initial fetch and play
+            console.log("[TTS] Fetching audio...");
             fetchAudio();
         }
-    }, [lines, rate]); // Re-fetch if lines change significantly?
+    }, [lines, rate, activePageKey, pages, projectId, nushaIndex]); /* Added dependencies to avoid stale state */
 
     const pause = useCallback(() => {
         if (audioRef.current) {
@@ -214,13 +266,30 @@ export function TTSProvider({ children }: { children: React.ReactNode }) {
         setActiveWordIndex(null);
         // Retain chunks for replay? Or clear? 
         // Let's keep them.
+        // Let's keep them.
     }, []);
+
+    // Reset audio when page changes
+    useEffect(() => {
+        stop();
+        chunksRef.current = [];
+        setTotalAudioChunks(0);
+        setCurrentAudioChunk(0);
+    }, [activePageKey, stop]);
+
+    const seek = (time: number) => {
+        if (audioRef.current) {
+            audioRef.current.currentTime = time;
+            setCurrentTime(time);
+        }
+    };
 
     return (
         <TTSContext.Provider value={{
             isPlaying, isLoading, play, pause, stop,
             activeWordIndex, rate, setRate,
-            currentAudioChunk, totalAudioChunks
+            currentAudioChunk, totalAudioChunks,
+            currentTime, duration, seek
         }}>
             {children}
         </TTSContext.Provider>

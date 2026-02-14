@@ -38,8 +38,8 @@ SPELLCHECK_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-pro-preview")
 VERTEX_PROJECT_ID = (os.getenv("VERTEX_PROJECT_ID", "") or "").strip()
 VERTEX_LOCATION = (os.getenv("VERTEX_LOCATION", "us-central1") or "us-central1").strip()
 VERTEX_GEMINI_MODEL = (os.getenv("VERTEX_GEMINI_MODEL", "gemini-3-pro-preview") or "gemini-3-pro-preview").strip()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.2")
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-5-20251101")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20240620")
 SPELLCHECK_MAX_PARAS = 999999
 
 # =========================

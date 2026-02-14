@@ -111,6 +111,14 @@ export default function TextPanelToolbar() {
                             <FileText size={13} />
                             <span className="font-medium">Kağıt</span>
                         </button>
+                        <button
+                            onClick={() => setViewMode('editor')}
+                            className={`px-2 py-0.5 rounded-md flex items-center gap-1.5 transition-all ${viewMode === 'editor' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                            title="Editör Görünümü"
+                        >
+                            <Type size={13} />
+                            <span className="font-medium">Editör</span>
+                        </button>
                     </div>
 
                     {/* Font Size */}

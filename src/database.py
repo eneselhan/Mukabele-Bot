@@ -56,6 +56,7 @@ class DatabaseManager:
                 nusha_index INTEGER,
                 name TEXT,
                 config_json TEXT, -- Stores DPI, filename etc.
+                is_base BOOLEAN DEFAULT 0,
                 UNIQUE(project_id, nusha_index),
                 FOREIGN KEY(project_id) REFERENCES projects(id)
             )
@@ -70,7 +71,8 @@ class DatabaseManager:
                 nusha_index INTEGER,
                 line_no INTEGER,
                 
-                ref_text TEXT,  -- Word text (Corrected)
+                ref_text TEXT,  -- Word text (Corrected, Plain)
+                content_html TEXT, -- Rich Text (HTML)
                 ocr_text TEXT,  -- Original OCR
                 image_path TEXT, -- Relative path to line image
                 
@@ -85,17 +87,41 @@ class DatabaseManager:
             )
         """)
 
-        # Migration: Check if 'is_deleted' exists, if not add it
+        # Migration: Check columns and add missing ones
         try:
+            # Check is_base in nushas
+            cursor.execute("SELECT is_base FROM nushas LIMIT 1")
+        except sqlite3.OperationalError:
+            logger.info("Migrating DB: Adding is_base to nushas")
+            try:
+                cursor.execute("ALTER TABLE nushas ADD COLUMN is_base BOOLEAN DEFAULT 0")
+            except Exception as e:
+                logger.error(f"Migration failed (is_base): {e}")
+
+        try:
+            # Check is_deleted
             cursor.execute("SELECT is_deleted FROM aligned_lines LIMIT 1")
         except sqlite3.OperationalError:
-            # Column missing, add it
             logger.info("Migrating DB: Adding is_deleted to aligned_lines")
             try:
                 cursor.execute("ALTER TABLE aligned_lines ADD COLUMN is_deleted BOOLEAN DEFAULT 0")
                 cursor.execute("ALTER TABLE aligned_lines ADD COLUMN deleted_at TIMESTAMP")
             except Exception as e:
                 logger.error(f"Migration failed: {e}")
+
+        try:
+            # Check content_html
+            cursor.execute("SELECT content_html FROM aligned_lines LIMIT 1")
+        except sqlite3.OperationalError:
+            logger.info("Migrating DB: Adding content_html to aligned_lines")
+            try:
+                cursor.execute("ALTER TABLE aligned_lines ADD COLUMN content_html TEXT")
+                # Optional: Initialize content_html with ref_text for existing rows?
+                # cursor.execute("UPDATE aligned_lines SET content_html = ref_text WHERE content_html IS NULL")
+                # Actually, let's do that to avoid nulls
+                cursor.execute("UPDATE aligned_lines SET content_html = ref_text WHERE content_html IS NULL")
+            except Exception as e:
+                logger.error(f"Migration failed (content_html): {e}")
         
         # 4. Footnotes
         cursor.execute("""
@@ -258,8 +284,8 @@ class DatabaseManager:
             conn.execute("DELETE FROM aligned_lines WHERE project_id=? AND nusha_index=?", (project_id, nusha_index))
             
             sql = """
-                INSERT INTO aligned_lines (project_id, nusha_index, line_no, ref_text, ocr_text, image_path, meta_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO aligned_lines (project_id, nusha_index, line_no, ref_text, content_html, ocr_text, image_path, meta_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """
             
             params = []
@@ -270,6 +296,7 @@ class DatabaseManager:
                 
                 best = line.get("best", {})
                 ref_text = best.get("raw", "")
+                content_html = best.get("html", ref_text) # Default to ref_text if no html
                 
                 # Meta includes everything else
                 meta = {k: v for k, v in line.items() if k not in ["line_no", "ocr_text", "line_image"]}
@@ -278,7 +305,8 @@ class DatabaseManager:
                     project_id, 
                     nusha_index, 
                     line_no, 
-                    ref_text, 
+                    ref_text,
+                    content_html, 
                     ocr_text, 
                     image_path, 
                     json.dumps(meta, ensure_ascii=False)
@@ -300,11 +328,12 @@ class DatabaseManager:
         cursor = conn.cursor()
         
         cursor.execute("""
-            SELECT line_no, ref_text, ocr_text, image_path, meta_json
+            SELECT line_no, ref_text, content_html, ocr_text, image_path, meta_json, is_deleted, deleted_at
             FROM aligned_lines
-            WHERE project_id=? AND nusha_index=?
+            WHERE project_id=? AND nusha_index=? AND is_deleted=0
             ORDER BY line_no ASC
         """, (project_id, nusha_index))
+        # Note: Added is_deleted=0 to filter out soft-deleted lines by default
         
         rows = cursor.fetchall()
         
@@ -339,6 +368,12 @@ class DatabaseManager:
             line_obj["best"] = {}
         line_obj["best"]["raw"] = row["ref_text"]
         
+        # Inject HTML content
+        if "content_html" in row.keys() and row["content_html"]:
+            line_obj["best"]["html"] = row["content_html"]
+        else:
+            line_obj["best"]["html"] = row["ref_text"] # Fallback
+            
         return line_obj
 
     def get_deleted_lines(self, project_id: str, nusha_index: int) -> List[Dict]:

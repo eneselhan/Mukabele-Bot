@@ -10,6 +10,7 @@ import LineList from "@/components/mukabele/LineList";
 import ImagePanelToolbar from "@/components/mukabele/ImagePanelToolbar";
 import ImagePanelFooter from "@/components/mukabele/ImagePanelFooter";
 import TextPanelToolbar from "@/components/mukabele/TextPanelToolbar";
+import TextPanelFooter from "@/components/mukabele/TextPanelFooter";
 import ErrorPopup from "@/components/mukabele/ErrorPopup";
 import { ArrowLeft, BookOpen, Keyboard } from "lucide-react";
 
@@ -128,6 +129,7 @@ function MukabeleContent() {
                             <div className="flex-1 overflow-hidden relative">
                                 <LineList />
                             </div>
+                            <TextPanelFooter />
                         </div>
                     }
                 />

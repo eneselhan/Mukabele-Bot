@@ -761,7 +761,7 @@ class ProjectManager:
                 
         return []
 
-    def update_nusha_line(self, project_id: str, nusha_index: int, line_no: int, new_text: str) -> bool:
+    def update_nusha_line(self, project_id: str, nusha_index: int, line_no: int, new_text: str, new_html: str = None) -> bool:
         """
         Updates a single line text in both DB and Filesystem.
         """
@@ -772,14 +772,22 @@ class ProjectManager:
         
         # Get current state (DB first)
         lines = self.get_nusha_alignment(project_id, nusha_index)
-        target_line = next((l for l in lines if l.get("line_no") == line_no), None)
         
-        if not target_line:
+        # Find index to update in place
+        target_idx = next((i for i, l in enumerate(lines) if l.get("line_no") == line_no), -1)
+        
+        if target_idx == -1:
             return False
+            
+        target_line = lines[target_idx]
             
         # Update text
         if "best" not in target_line: target_line["best"] = {}
         target_line["best"]["raw"] = new_text
+        
+        # Update HTML (Rich Text)
+        if new_html is not None:
+             target_line["best"]["html"] = new_html
         
         # Save to DB
         try:
@@ -802,6 +810,10 @@ class ProjectManager:
             # If N1 and using root alignment.json:
             target_path = alignment_path
             if nusha_index == 1:
+                # Check root alignment if nusha specific doesn't exist OR if we read from root
+                # Since get_nusha_alignment prioritizes DB, we rely on where it SHOULD go.
+                # Standard: Always write to nusha specific folder if possible?
+                # Or check if root exists and use it to maintain legacy structure?
                 if not alignment_path.exists() and (self.projects_dir / project_id / "alignment.json").exists():
                     target_path = self.projects_dir / project_id / "alignment.json"
             
@@ -810,9 +822,9 @@ class ProjectManager:
             # And `lines` variable above might be from DB which is consistent.
             # So we can just rewrite the file with `lines` (which has the update).
             
-            full_payload = {"aligned": lines} # Simplified payload
+            full_payload = {"aligned": lines} # Default payload
             
-            # But wait, original file might have other keys!
+            # Use existing payload wrapper if file exists to preserve other keys
             if target_path.exists():
                 with open(target_path, "r", encoding="utf-8") as f:
                     full_payload = json.load(f)

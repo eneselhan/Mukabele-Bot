@@ -9,6 +9,7 @@ export interface LineData {
     text?: string;
     best?: {
         raw: string;
+        html?: string;
         start_word?: number;
         end_word?: number;
     };
@@ -52,6 +53,7 @@ interface MukabeleContextType {
     setData: (data: MukabeleData) => void;
     isLoading: boolean;
     setIsLoading: (loading: boolean) => void;
+    projectId: string;
 
     // View State
     activeLine: number | null;
@@ -84,8 +86,8 @@ interface MukabeleContextType {
     setSplitRatio: (ratio: number) => void; // 0.2 to 0.8
     fontSize: number;
     setFontSize: (size: number) => void; // px
-    viewMode: 'list' | 'paper';
-    setViewMode: (mode: 'list' | 'paper') => void;
+    viewMode: 'list' | 'paper' | 'editor';
+    setViewMode: (mode: 'list' | 'paper' | 'editor') => void;
 
     // Nusha State
     nushaIndex: number;
@@ -99,7 +101,8 @@ interface MukabeleContextType {
     lines: LineData[]; // Returns active lines
     pages: PageData[]; // Derived pages index
     refreshData: () => Promise<void>;
-    updateLineText: (lineNo: number, newText: string) => void;
+    updateLineText: (lineNo: number, newText: string, newHtml?: string) => void;
+    saveLineText: (lineNo: number, newText: string, newHtml?: string) => Promise<boolean>;
     deleteLine: (lineNo: number) => Promise<boolean>;
     mergeLines: (nushaIndex: number, lineNumbers: number[]) => Promise<void>;
 
@@ -116,6 +119,10 @@ export interface PageData {
 const MukabeleContext = createContext<MukabeleContextType | undefined>(undefined);
 
 export function MukabeleProvider({ children }: { children: React.ReactNode }) {
+    const params = useParams();
+    // Support both projectId and id (legacy?)
+    const projectId = (params?.projectId || params?.id) as string;
+
     // State
     const [data, setData] = useState<MukabeleData | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -129,7 +136,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
     const [zoom, setZoomState] = useState(1.32);
     const [splitRatio, setSplitRatioState] = useState(0.52);
     const [fontSize, setFontSizeState] = useState(23);
-    const [viewMode, setViewModeState] = useState<'list' | 'paper'>('list');
+    const [viewMode, setViewModeState] = useState<'list' | 'paper' | 'editor'>('list');
     const [nushaIndex, setNushaIndexState] = useState(1);
     const [baseNushaIndex, setBaseNushaIndex] = useState(1);
     const [siglas, setSiglas] = useState<{ [key: string]: string }>({});
@@ -346,8 +353,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
-    const params = useParams();
-    const projectId = params?.id as string;
+
 
     // Load project-specific preferences
     useEffect(() => {
@@ -391,7 +397,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
     }, [projectId, activePageKey]);
 
     // Update a specific line's text in local state (called after successful save)
-    const updateLineText = (lineNo: number, newText: string) => {
+    const updateLineText = (lineNo: number, newText: string, newHtml?: string) => {
         // Update in data state
         if (data) {
             const newData = { ...data };
@@ -403,8 +409,9 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
                     if (line) {
                         if (line.best) {
                             line.best = { ...line.best, raw: newText };
+                            if (newHtml) line.best.html = newHtml;
                         } else {
-                            line.best = { raw: newText };
+                            line.best = { raw: newText, html: newHtml };
                         }
                         break;
                     }
@@ -420,13 +427,40 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
                 if (l.line_no === lineNo) {
                     return {
                         ...l,
-                        best: { ...(l.best || { raw: '' }), raw: newText }
+                        best: {
+                            ...(l.best || { raw: '' }),
+                            raw: newText,
+                            html: newHtml || l.best?.html
+                        }
                     };
                 }
                 return l;
             })
         })));
     };
+
+    const saveLineText = useCallback(async (lineNo: number, newText: string, newHtml?: string): Promise<boolean> => {
+        try {
+            const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/lines/update`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    line_no: lineNo,
+                    new_text: newText,
+                    content_html: newHtml,
+                    nusha_index: nushaIndex
+                })
+            });
+
+            if (!res.ok) return false;
+
+            updateLineText(lineNo, newText, newHtml);
+            return true;
+        } catch (err) {
+            console.error("Save line error:", err);
+            return false;
+        }
+    }, [projectId, nushaIndex]);
 
     // Delete a line from backend and local state
     const deleteLine = useCallback(async (lineNo: number): Promise<boolean> => {
@@ -772,7 +806,7 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
         zoom, setZoom,
         splitRatio, setSplitRatio,
         fontSize, setFontSize,
-        viewMode, setViewMode,
+        viewMode, setViewMode: setViewModeState,
         nushaIndex, setNushaIndex,
         baseNushaIndex, updateBaseNusha,
         siglas, updateSigla,
@@ -781,8 +815,10 @@ export function MukabeleProvider({ children }: { children: React.ReactNode }) {
         refreshData,
         mergeLines,
         updateLineText,
+        saveLineText,
         deleteLine,
-        setPages
+        setPages,
+        projectId
     };
 
     return (

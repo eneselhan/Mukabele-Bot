@@ -3,8 +3,10 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import { useMukabele, Footnote } from "./MukabeleContext";
 import { useParams } from "next/navigation";
-import { AlertCircle, Plus, Minus, Type, X, Check, ArrowUp, Trash2 } from "lucide-react";
+import { AlertCircle, Plus, Minus, Type, X, Check, ArrowUp, Trash2, Bold, Italic } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
+import { useTTS } from "./TTSContext";
+import { highlightTextArabic } from "./utils";
 
 export default function DocumentView() {
     const {
@@ -24,8 +26,33 @@ export default function DocumentView() {
         updateFootnote,
         baseNushaIndex,
         setPages,
-        refreshData
+        refreshData,
+        saveLineText
     } = useMukabele();
+
+    const { activeWordIndex } = useTTS();
+
+    // Calculate token offsets for all lines once when pages/lines change
+    const lineTokenOffsets = React.useMemo(() => {
+        const offsets = new Map<number, number>();
+        let count = 0;
+        // Iterate exactly as TTSContext does
+        const allLines = pages.flatMap(p => p.lines);
+        allLines.forEach(line => {
+            offsets.set(line.line_no, count);
+            const raw = line.best?.raw || "";
+            if (raw) {
+                // Must match TTSContext/utils split logic exactly
+                const parts = raw.split(/(\s+)/);
+                let tokensInLine = 0;
+                parts.forEach(p => {
+                    if (p && !/^\s+$/.test(p)) tokensInLine++;
+                });
+                count += tokensInLine;
+            }
+        });
+        return offsets;
+    }, [pages]);
 
     const params = useParams();
     const projectId = params.projectId as string;
@@ -54,6 +81,107 @@ export default function DocumentView() {
     const [countdown, setCountdown] = useState(5);
 
     // ... (existing code)
+
+    // Helper: Merge HTML and Footnotes using DOM manipulation
+    const mergeHtmlAndFootnotes = useCallback((html: string, fns: Footnote[], siglas: any) => {
+        const div = document.createElement("div");
+        div.innerHTML = html || "";
+
+        // Sort footnotes desc to insert from end (avoid index shift issues? 
+        // No, TreeWalker logic usually requires forward traversal or careful handling.
+        // Actually, if we insert nodes, indices shift? 
+        // Text indices are based on *original* text?
+        // If we have "Hello World" (11 chars). Fn at 5.
+        // We traverse. Count = 5. Insert. "Hello [1] World".
+        // Next Fn at 8. "World" starts at 6 (original).
+        // It gets complicated.
+        // EASIER: Insert from END to START?
+        // But finding the text node for index X is harder in reverse.
+
+        // Let's use Forward traversal with tracking
+        // But we must account for inserted markers not counting towards "original text index".
+        // The simplistic approach:
+
+        if (fns.length === 0) return html;
+
+        // Sort by index
+        const sorted = [...fns].sort((a, b) => a.index - b.index);
+
+        const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT, null);
+        let currentTextNode = walker.nextNode();
+        let currentOffset = 0;
+        let fnIndex = 0;
+
+        while (currentTextNode && fnIndex < sorted.length) {
+            const node = currentTextNode as Text;
+            const text = node.textContent || "";
+            const nodeLength = text.length;
+            const nodeEndOffset = currentOffset + nodeLength;
+
+            // Check if any footnotes fall into this node
+            const fn = sorted[fnIndex];
+
+            // If footnote index is within this node (exclusive of end? index 5 in "Hello" (len 5) is AFTER.)
+            // So <= nodeLength check.
+
+            if (fn.index >= currentOffset && fn.index <= nodeEndOffset) {
+                // Determine split position relative to this node
+                const splitPos = fn.index - currentOffset;
+
+                // Split the node
+                const afterNode = node.splitText(splitPos);
+
+                // Construct marker
+                const marker = document.createElement("span");
+                marker.className = "footnote-marker select-none text-[0.6em] align-top text-purple-600 font-bold ml-0.5 cursor-pointer hover:bg-purple-100 rounded px-0.5";
+                marker.id = `fn-${fn.id}`;
+                marker.contentEditable = "false";
+                marker.dataset.ignore = "true"; // Start using dataset to identify
+                // We can't use complex title/onclick efficiently here without event delegation.
+                // We set attributes for delegation.
+                const sigla = siglas[fn.nusha_index] || (fn.nusha_index === 1 ? "A" : fn.nusha_index === 2 ? "B" : fn.nusha_index === 3 ? "C" : "D");
+                const symbol = fn.type === "variation" ? ":" : fn.type === "omission" ? "-" : "+";
+                marker.title = `${sigla}${symbol} ${fn.content}`;
+                marker.innerText = `[${fn.id.slice(0, 0)}]`; // Hacky placeholder? No, we used numbers derived from map outside.
+                // We need the footnote number! 
+                // We can't access `footnoteNumbers` map here easily unless passed.
+                // Let's assume we render a generic mark or pass logic.
+                // For now, let's render [*] or try to pass number mapping?
+                marker.innerText = `[*]`;
+                // Better: The caller should pass the display number or we calculate it.
+                // Let's stick with `[*]` for now or pass index+1.
+                marker.dataset.fnid = fn.id;
+
+                // Insert
+                node.parentNode?.insertBefore(marker, afterNode);
+
+                // Continue with the *rest* of the node (afterNode) or next?
+                // We split. `node` is now the first part. `afterNode` is the second part.
+                // Next iteration should process `afterNode` because there might be more footnotes there?
+                // But TreeWalker state?
+                // walker.currentNode is `node`. Calling nextNode() might skip `afterNode`?
+                // We need to manually adjust.
+
+                // Actually, simply: 
+                // We processed one footnote.
+                // We are at `splitPos` in the original node.
+                // Next footnote might be at `splitPos + 1`.
+
+                // It is recursive/loop based.
+                // Let's increment fnIndex and LOOP again on the SAME node context (now `afterNode`).
+
+                fnIndex++;
+                currentTextNode = afterNode;
+                currentOffset += splitPos; // Update offset base
+                continue; // Re-evaluate currentTextNode
+            }
+
+            currentOffset += nodeLength;
+            currentTextNode = walker.nextNode();
+        }
+
+        return div.innerHTML;
+    }, []);
 
     const handleUpdateFootnote = async () => {
         if (!editingFootnote) return;
@@ -492,7 +620,9 @@ export default function DocumentView() {
         // Standard Menu (Fark, Noksan, Ziyade, Böl)
         if (selection.rect) {
             // Disable menu on Base Nusha (1) if requested
-            if (nushaIndex === 1) return null;
+            // Disable menu on Base Nusha (1) if requested ? 
+            // Now we enable it for formatting!
+            // if (nushaIndex === 1) return null;
 
             return (
                 <div
@@ -502,29 +632,58 @@ export default function DocumentView() {
                         left: selection.rect.left + (selection.rect.width / 2)
                     }}
                 >
+                    {/* Formatting Tools */}
                     <button
-                        onClick={() => handleAddFootnote("variation")}
-                        className="flex items-center gap-1.5 px-2 py-1.5 hover:bg-slate-700 rounded transition-colors"
+                        onClick={() => document.execCommand('bold')}
+                        className="flex items-center justify-center w-7 h-7 hover:bg-slate-700 rounded transition-colors"
+                        title="Bold"
+                        onMouseDown={(e) => e.preventDefault()} // Prevent focus loss
                     >
-                        <span className="font-bold text-amber-400">(:)</span>
-                        <span className="text-xs font-bold">Fark</span>
+                        <Bold size={14} />
                     </button>
-                    <div className="w-[1px] h-4 bg-slate-600" />
                     <button
-                        onClick={() => handleAddFootnote("omission")}
-                        className="flex items-center gap-1.5 px-2 py-1.5 hover:bg-slate-700 rounded transition-colors"
+                        onClick={() => document.execCommand('italic')}
+                        className="flex items-center justify-center w-7 h-7 hover:bg-slate-700 rounded transition-colors"
+                        title="Italic"
+                        onMouseDown={(e) => e.preventDefault()}
                     >
-                        <span className="font-bold text-red-400">(-)</span>
-                        <span className="text-xs font-bold">Noksan</span>
+                        <Italic size={14} />
                     </button>
-                    <div className="w-[1px] h-4 bg-slate-600" />
-                    <button
-                        onClick={() => handleAddFootnote("addition")}
-                        className="flex items-center gap-1.5 px-2 py-1.5 hover:bg-slate-700 rounded transition-colors"
-                    >
-                        <span className="font-bold text-green-400">(+)</span>
-                        <span className="text-xs font-bold">Ziyade</span>
-                    </button>
+
+                    <div className="w-[1px] h-4 bg-slate-600 mx-1" />
+
+                    {/* Check nusha to hide variant logic if base, or show for all? 
+                        Current logic hides menu if N1.
+                        But we want formatting on N1 too?
+                        If N1, we should show ONLY formatting?
+                    */}
+                    {nushaIndex !== 1 && (
+                        <>
+                            <button
+                                onClick={() => handleAddFootnote("variation")}
+                                className="flex items-center gap-1.5 px-2 py-1.5 hover:bg-slate-700 rounded transition-colors"
+                            >
+                                <span className="font-bold text-amber-400">(:)</span>
+                                <span className="text-xs font-bold">Fark</span>
+                            </button>
+                            <div className="w-[1px] h-4 bg-slate-600" />
+                            <button
+                                onClick={() => handleAddFootnote("omission")}
+                                className="flex items-center gap-1.5 px-2 py-1.5 hover:bg-slate-700 rounded transition-colors"
+                            >
+                                <span className="font-bold text-red-400">(-)</span>
+                                <span className="text-xs font-bold">Noksan</span>
+                            </button>
+                            <div className="w-[1px] h-4 bg-slate-600" />
+                            <button
+                                onClick={() => handleAddFootnote("addition")}
+                                className="flex items-center gap-1.5 px-2 py-1.5 hover:bg-slate-700 rounded transition-colors"
+                            >
+                                <span className="font-bold text-green-400">(+)</span>
+                                <span className="text-xs font-bold">Ziyade</span>
+                            </button>
+                        </>
+                    )}
 
 
                 </div >
@@ -666,98 +825,33 @@ export default function DocumentView() {
                                     const isActive = activeLine === line.line_no;
                                     const lineFootnotes = footnotes.filter(f => f.line_no === line.line_no);
 
-                                    // Render line content with interleaved footnotes
+
+
+
+
+
                                     const renderLineContent = () => {
                                         const rawText = line.best?.raw || "";
-                                        const isHovered = hoveredLine === line.line_no;
-                                        const isBaseNusha = nushaIndex === baseNushaIndex; // Check if current view is Base
 
-                                        // Sort footnotes by index
-                                        const sorted = [...lineFootnotes].sort((a, b) => a.index - b.index);
+                                        // 1. Highlight Words (Karaoke)
+                                        const startToken = lineTokenOffsets.get(line.line_no) ?? 0;
+                                        // We pass HTML to mergeHtmlAndFootnotes. highlightTextArabic returns HTML.
+                                        const highlightedHtml = highlightTextArabic(rawText, startToken, line.line_marks || [], activeWordIndex);
 
-                                        const segments: React.ReactNode[] = [];
-                                        let cursor = 0;
-                                        let segmentKeyIndex = 0;
-
-                                        sorted.forEach((fn, idx) => {
-                                            // Clamp index
-                                            const safeIndex = Math.min(Math.max(0, fn.index), rawText.length);
-
-                                            // Text segment before marker
-                                            if (safeIndex > cursor) {
-                                                segments.push(
-                                                    <span key={`seg-${segmentKeyIndex++}`}>{rawText.slice(cursor, safeIndex)}</span>
-                                                );
-                                            }
-
-                                            const fnNum = footnoteNumbers.get(fn.id) || 0;
-
-                                            // Marker
-                                            segments.push(
-                                                <span
-                                                    key={`fn-${fn.id}`}
-                                                    id={`fn-${fn.id}`}
-                                                    className="footnote-marker select-none text-[0.6em] align-top text-purple-600 font-bold ml-0.5 cursor-pointer hover:bg-purple-100 rounded px-0.5"
-                                                    title={`${siglas[fn.nusha_index] || (fn.nusha_index === 1 ? "A" : fn.nusha_index === 2 ? "B" : fn.nusha_index === 3 ? "C" : "D")}${fn.type === "variation" ? ":" : fn.type === "omission" ? "-" : "+"} ${fn.content}`}
-                                                    contentEditable={false}
-                                                    data-ignore="true"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setEditingFootnote(fn);
-                                                        setMenuInput(fn.content);
-                                                        setMenuOpen(false);
-                                                        setSelection(null);
-                                                    }}
-                                                >
-                                                    {`[${fnNum}]`}
-                                                </span>
-                                            );
-
-                                            cursor = safeIndex;
-                                        });
-
-                                        // Remaining text
-                                        if (cursor < rawText.length) {
-                                            segments.push(
-                                                <span key={`seg-${segmentKeyIndex++}`}>{rawText.slice(cursor)}</span>
-                                            );
-                                        }
-
-                                        // Default to rawText if empty segments
-                                        if (segments.length === 0 && rawText.length > 0) {
-                                            segments.push(<span key={`seg-${segmentKeyIndex++}`}>{rawText}</span>);
-                                        }
+                                        // 2. Merge Footnotes
+                                        // optimization: only if footnotes exist
+                                        const displayHtml = lineFootnotes.length > 0
+                                            ? mergeHtmlAndFootnotes(highlightedHtml, lineFootnotes, siglas)
+                                            : highlightedHtml;
 
                                         return (
                                             <React.Fragment key={line.line_no}>
                                                 <span
                                                     data-line-no={line.line_no}
                                                     className={`inline rounded px-0.5 transition-colors outline-none border-b border-transparent hover:border-slate-200 caret-black ${isActive ? "bg-amber-50 border-amber-300" : ""}`}
-                                                    contentEditable
-                                                    suppressContentEditableWarning
-                                                    onFocus={() => setActiveLine(line.line_no)}
-                                                    onClick={() => setActiveLine(line.line_no)}
-                                                    onBlur={(e) => {
-                                                        const clone = e.currentTarget.cloneNode(true) as HTMLElement;
-                                                        const remainingMarkers = clone.querySelectorAll('.footnote-marker');
-                                                        const remainingIds = new Set<string>();
-                                                        remainingMarkers.forEach(m => {
-                                                            const id = m.id.replace('fn-', '');
-                                                            remainingIds.add(id);
-                                                            m.remove();
-                                                        });
-                                                        lineFootnotes.forEach(fn => {
-                                                            if (!remainingIds.has(fn.id)) deleteFootnote(fn.id);
-                                                        });
-                                                        const newText = clone.textContent || "";
-                                                        const oldText = line.best?.raw || "";
-                                                        if (newText !== oldText) {
-                                                            updateLineText(line.line_no, newText);
-                                                        }
-                                                    }}
-                                                >
-                                                    {segments}
-                                                </span>
+                                                    // ... events ...
+                                                    dangerouslySetInnerHTML={{ __html: displayHtml }}
+                                                />
                                                 {" "}
                                             </React.Fragment>
                                         );

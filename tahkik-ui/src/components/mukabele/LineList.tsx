@@ -4,6 +4,7 @@ import React, { useEffect, useRef } from "react";
 import { useMukabele } from "./MukabeleContext";
 import LineItem from "./LineItem";
 import DocumentView from "./DocumentView";
+import EditorView from "./EditorView";
 
 import { useParams } from "next/navigation";
 
@@ -115,6 +116,8 @@ export default function LineList() {
         <div className="flex flex-col h-full bg-slate-50 relative">
             {viewMode === 'paper' ? (
                 <DocumentView />
+            ) : viewMode === 'editor' ? (
+                <EditorView />
             ) : (
                 <div
                     ref={listRef}

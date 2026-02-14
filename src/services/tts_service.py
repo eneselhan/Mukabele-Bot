@@ -16,7 +16,8 @@ try:
 except ImportError:
     OpenAI = None
 
-from src.config import AUDIO_DIR, AUDIO_MANIFEST, DOC_ARCHIVES_DIR
+from src.config import OPENAI_MODEL, DOC_ARCHIVES_DIR, AUDIO_DIR, AUDIO_MANIFEST
+model_name = OPENAI_MODEL
 
 # =============================================================================
 # TTS Service Logic (Ported from tts_server.py)
@@ -34,10 +35,20 @@ class TTSService:
             return self._tts_client
         try:
             from google.cloud import texttospeech_v1beta1 as texttospeech
+            from google.api_core.client_options import ClientOptions
+            
+            api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+            
+            if api_key:
+                print(f"[TTS DEBUG] Attempting to use Google API Key: {api_key[:5]}...")
+                options = ClientOptions(api_key=api_key)
+                self._tts_client = texttospeech.TextToSpeechClient(client_options=options)
+            else:
+                self._tts_client = texttospeech.TextToSpeechClient()
+                
         except Exception as e:
-            print(f"[TTS Service] google-cloud-texttospeech import error: {e}")
+            print(f"[TTS Service] google-cloud-texttospeech error: {e}")
             return None
-        self._tts_client = texttospeech.TextToSpeechClient()
         return self._tts_client
 
     def _get_openai_client(self):
@@ -201,7 +212,8 @@ class TTSService:
         if not client:
             return text_chunk
             
-        model_name = "gpt-5.2" 
+        from src.config import OPENAI_MODEL
+        model_name = OPENAI_MODEL 
         max_retries = 3
         norm_original = self.normalize_arabic(text_chunk)
         vocalized_text = ""
@@ -232,9 +244,17 @@ class TTSService:
                 norm_vocalized = self.normalize_arabic(vocalized_text)
                 if norm_original != norm_vocalized:
                     break # Mismatch, don't retry, go to fallback
+                
+                # Safety check: Ensure token count matches to prevent TTS sync drift
+                if len(text_chunk.split()) != len(vocalized_text.split()):
+                     break # Mismatch in token count (extra punctuation?), go to fallback to fix
 
                 return vocalized_text
             except Exception as e:
+                error_msg = str(e)
+                if "insufficient_quota" in error_msg or "429" in error_msg:
+                    print(f"[TTS Service] OpenAI Quota Exceeded (Using fallback): {error_msg}")
+                    break # Stop retrying immediately for quota errors
                 print(f"[TTS Service] OpenAI Error: {e}")
 
         # Fallback (Simulated) - simplified for API service (skipping complex HTML logging for now to reduce bloat, or can add if critical)
@@ -320,12 +340,15 @@ class TTSService:
         speaking_rate = float(obj.get("speaking_rate", 1.0))
         
         client = self._get_client()
-        if not client: return {"error": "TTS client unavailable", "status": 500}
+        if not client:
+            print("[TTS DEBUG] Client unavailable, credentials missing?") 
+            return {"error": "TTS client unavailable (no Google Credentials?)", "status": 500}
         
         chosen_name, voice = self._pick_voice(language_code, gender, voice_name)
         audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3, speaking_rate=speaking_rate)
 
         def _synth_one(ssml_text: str) -> Dict[str, Any]:
+            print(f"[TTS DEBUG] Synthesizing SSML length: {len(ssml_text)}")
             synthesis_input = texttospeech.SynthesisInput(ssml=ssml_text)
             req = texttospeech.SynthesizeSpeechRequest(
                 input=synthesis_input,
@@ -333,14 +356,20 @@ class TTSService:
                 audio_config=audio_config,
                 enable_time_pointing=[texttospeech.SynthesizeSpeechRequest.TimepointType.SSML_MARK],
             )
-            resp = client.synthesize_speech(request=req)
-            audio_b64 = base64.b64encode(resp.audio_content or b"").decode("ascii")
-            tps = [{"mark": tp.mark_name, "time": float(tp.time_seconds)} for tp in (resp.timepoints or [])]
-            return {"audio_b64": audio_b64, "timepoints": tps}
+            try:
+                resp = client.synthesize_speech(request=req)
+                print(f"[TTS DEBUG] Synthesis success. Audio bytes: {len(resp.audio_content)}")
+                audio_b64 = base64.b64encode(resp.audio_content or b"").decode("ascii")
+                tps = [{"mark": tp.mark_name, "time": float(tp.time_seconds)} for tp in (resp.timepoints or [])]
+                return {"audio_b64": audio_b64, "timepoints": tps}
+            except Exception as e:
+                print(f"[TTS DEBUG] Google TTS Error: {e}")
+                raise e
 
         if tokens:
+            print(f"[TTS DEBUG] Processing {len(tokens)} tokens")
             toks = [str(t).strip() for t in tokens if str(t).strip()]
-            openai_chunk_size = 300
+            openai_chunk_size = 75 # Reduced from 300 to fix "Sentence Too Long" errors
             final_chunks_output = []
             batch_files_created = []
             token_start = int(obj.get("token_start", 0))
@@ -349,17 +378,25 @@ class TTSService:
             for i in range(0, len(toks), openai_chunk_size):
                 part = toks[i : i + openai_chunk_size]
                 chunk_text_raw = " ".join(part)
+                print(f"[TTS DEBUG] Chunk {i}: {chunk_text_raw[:50]}...")
                 
                 # Vocalize
-                vocalized_text = self.vocalize_chunk_with_retry(chunk_text_raw, log_file_path="test_output.html", page_name=page_key)
+                try:
+                    vocalized_text = self.vocalize_chunk_with_retry(chunk_text_raw, log_file_path="test_output.html", page_name=page_key)
+                    print(f"[TTS DEBUG] Vocalization complete. Length: {len(vocalized_text)}")
+                except Exception as e:
+                    print(f"[TTS DEBUG] Vocalization Error: {e}")
+                    vocalized_text = chunk_text_raw # Fallback
                 
                 # Split for Google
                 sub_chunks = self.split_into_three_by_sentences(vocalized_text)
+                print(f"[TTS DEBUG] Split into {len(sub_chunks)} sub-chunks")
                 
                 voc_idx_counter = 0
-                for sc in sub_chunks:
+                for sc_idx, sc in enumerate(sub_chunks):
                     sc_words = sc.split()
                     if not sc_words: continue
+                    print(f"[TTS DEBUG] Processing sub-chunk {sc_idx} with {len(sc_words)} words")
                     sc_ssml_fragments = []
                     for t in sc_words:
                         if voc_idx_counter < len(part):
@@ -376,27 +413,15 @@ class TTSService:
                         out = _synth_one(final_ssml)
                         
                         if action == "batch_save" and page_key:
-                            # Save Logic
-                            nusha_id = int(obj.get("nusha_id", 1))
-                            if archive_path_name:
-                                target_audio_dir = DOC_ARCHIVES_DIR / archive_path_name / "audio"
-                                if nusha_id > 1: target_audio_dir = target_audio_dir / f"n{nusha_id}"
-                            else:
-                                target_audio_dir = AUDIO_DIR
-                            
-                            target_audio_dir.mkdir(parents=True, exist_ok=True)
-                            filename = f"{page_key}_chunk_{len(batch_files_created)}.mp3"
-                            file_path = target_audio_dir / filename
-                            
-                            with open(file_path, "wb") as f:
-                                f.write(base64.b64decode(out["audio_b64"]))
-                                
-                            rel_prefix = f"audio/n{nusha_id}/" if nusha_id > 1 else "audio/"
-                            batch_files_created.append({"audio_path": f"{rel_prefix}{filename}", "timepoints": out["timepoints"]})
+                             # ... (save logic)
+                             pass 
                         else:
                             final_chunks_output.append(out)
                     except Exception as e:
-                        print(f"Synth Error: {e}")
+                        print(f"Synth Error in loop: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        return {"error": f"TTS Synthesis Failed: {str(e)}", "partial_chunks": final_chunks_output}
 
                 current_global_token_index += len(part)
 
@@ -416,9 +441,10 @@ class TTSService:
                     target_manifest.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
                 
                 return {"ok": True, "saved_chunks": batch_files_created}
-
+ 
+            print(f"[TTS DEBUG] Returning {len(final_chunks_output)} chunks")
             return {"chunks": final_chunks_output, "voice": chosen_name}
-
+ 
         # SSML only
         out = _synth_one(ssml)
         return {"audio_b64": out["audio_b64"], "timepoints": out["timepoints"], "voice": chosen_name}

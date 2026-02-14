@@ -11,6 +11,7 @@ import uvicorn
 import os
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -76,6 +77,7 @@ class ProcessRequest(BaseModel):
 class UpdateLineRequest(BaseModel):
     line_no: int
     new_text: str
+    content_html: Optional[str] = None
     nusha_index: int = 1
 
 class TTSRequest(BaseModel):
@@ -1348,10 +1350,27 @@ def get_pages(project_id: str, nusha_index: int = 1):
     except Exception as e:
          return JSONResponse(status_code=500, content={"error": str(e)})
 
+
+
+
+# ... (API endpoints)
+
 @app.post("/api/projects/{project_id}/lines/update")
 def update_line(project_id: str, req: UpdateLineRequest):
     try:
-        success = project_manager.update_nusha_line(project_id, req.nusha_index, req.line_no, req.new_text)
+        # If content_html is provided but new_text is missing/empty, derive text from HTML
+        text_to_save = req.new_text
+        if req.content_html and not text_to_save:
+            # Simple strip tags
+            text_to_save = re.sub('<[^<]+?>', '', req.content_html)
+            
+        success = project_manager.update_nusha_line(
+            project_id, 
+            req.nusha_index, 
+            req.line_no, 
+            text_to_save,
+            new_html=req.content_html
+        )
         
         if success:
             return {"ok": True}
@@ -1463,7 +1482,9 @@ def tts_generate(req: TTSRequest):
              
         return result
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e), "traceback": traceback.format_exc()})
 
 
 
